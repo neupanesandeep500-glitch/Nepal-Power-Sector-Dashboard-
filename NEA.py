@@ -577,25 +577,59 @@ _lock = threading.Lock()
 
 
 def _download_google_sheet_xlsx(url_or_id, out_path):
-    """Same approach as data_engine.download_google_sheet_xlsx (proven
-    in production for the power-plant dashboard) — kept as a local copy
-    so NEA.py has zero import dependency on data_engine.py."""
+    """Download the source workbook and validate the response is actually
+    an .xlsx (not an HTML error/sign-in page), trying the Sheets export
+    endpoint first and falling back to the direct Drive download endpoint."""
     import urllib.request
+    import urllib.error
 
     sheet_id = url_or_id
     if "/" in url_or_id:
-        for pat in (r"/spreadsheets/d/([a-zA-Z0-9-_]+)", r"id=([a-zA-Z0-9-_]+)"):
+        for pat in (r"/spreadsheets/d/([a-zA-Z0-9-_]+)",
+                    r"/file/d/([a-zA-Z0-9-_]+)",
+                    r"id=([a-zA-Z0-9-_]+)"):
             m = re.search(pat, url_or_id)
             if m:
                 sheet_id = m.group(1)
                 break
-    export_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx"
-    req = urllib.request.Request(export_url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        with open(out_path, "wb") as f:
-            f.write(resp.read())
-    return out_path
 
+    candidate_urls = [
+        f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=xlsx",
+        f"https://drive.google.com/uc?export=download&id={sheet_id}",
+    ]
+
+    last_err = None
+    for export_url in candidate_urls:
+        try:
+            req = urllib.request.Request(export_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                content = resp.read()
+                ctype = resp.headers.get("Content-Type", "")
+        except urllib.error.HTTPError as e:
+            last_err = f"HTTP {e.code} from {export_url}"
+            continue
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e} ({export_url})"
+            continue
+
+        # A real .xlsx is a zip archive — first two bytes are "PK". If Google
+        # couldn't serve the actual file (wrong permissions, sign-in wall,
+        # not a spreadsheet) it silently returns an HTML page instead.
+        if content[:2] != b"PK":
+            snippet = content[:200].decode("utf-8", errors="replace")
+            last_err = (f"{export_url} did not return a valid .xlsx "
+                        f"(Content-Type={ctype!r}; response started with: {snippet!r})")
+            continue
+
+        with open(out_path, "wb") as f:
+            f.write(content)
+        return out_path
+
+    raise RuntimeError(
+        f"Could not download the NEA workbook (id={sheet_id}) from any known URL. "
+        f"Last error: {last_err}. Confirm the sheet is shared as 'Anyone with the "
+        f"link can view' and that NEA_SHEET_URL points at it."
+    )
 
 def refresh(sheet_url: str = None) -> bool:
     """Pull the latest workbook, reparse, rebuild the dashboard JSON, and
