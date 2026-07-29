@@ -64,6 +64,15 @@ async function loadParams() {
   PARAMS = await res.json();
   const paramSelect = document.getElementById("param-select");
   paramSelect.innerHTML = "";
+  if (!PARAMS.length) {
+    const errBox = document.getElementById("error-box");
+    errBox.textContent = "No NEA operational data has synced yet, so there's nothing to forecast. " +
+      "Check that NEA_SHEET_URL is configured and the sheet is shared as \"Anyone with the link\", " +
+      "then wait for the next background sync or restart the app.";
+    errBox.style.display = "block";
+    document.getElementById("run-btn").disabled = true;
+    return false;
+  }
   PARAMS.forEach((p, i) => {
     const opt = document.createElement("option");
     opt.value = i; opt.textContent = p.label + (p.monthly ? "  (monthly)" : "  (annual)");
@@ -71,6 +80,7 @@ async function loadParams() {
   });
   paramSelect.addEventListener("change", updateModelChoices);
   updateModelChoices();
+  return true;
 }
 
 function updateModelChoices() {
@@ -93,6 +103,12 @@ function updateModelChoices() {
 async function runForecast() {
   const idx = document.getElementById("param-select").value;
   const p = PARAMS[idx];
+  if (!p) {
+    const errBox = document.getElementById("error-box");
+    errBox.textContent = "No parameter selected — no NEA data may be available yet.";
+    errBox.style.display = "block";
+    return;
+  }
   const model = document.getElementById("model-select").value;
   const nAhead = parseInt(document.getElementById("n-ahead").value || "5", 10);
   const errBox = document.getElementById("error-box");
@@ -154,8 +170,7 @@ function renderMeta(data) {
 }
 
 document.getElementById("run-btn").addEventListener("click", runForecast);
-loadParams().then(runForecast);
+loadParams().then((ok) => { if (ok) runForecast(); });
 </script>
 </body>
 </html>
-
