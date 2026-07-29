@@ -1025,7 +1025,45 @@ def unit_economics():
         out["avg_revenue_rate_rs_per_unit"].append(
             round(revenue / avail, 2) if (avail and revenue) else None)
     return out
+# ══════════════════════════════════════════════════════════════════════
+# ADMIN PANEL HELPERS  (add these to the bottom of NEA.py,
+# just before the "if __name__ == '__main__':" block)
+# ══════════════════════════════════════════════════════════════════════
 
+def load_from_path(path: str) -> bool:
+    """Load NEA data from a specific file path (for admin workbook upload).
+    Copies the file to the cache path so it persists across restarts.
+    Returns True on success, False on failure (error is stored in cache)."""
+    with _lock:
+        try:
+            parsed = parse_workbook(path)
+            data = build_dashboard_data(parsed)
+            import shutil
+            shutil.copy(path, CACHE_WORKBOOK_PATH)
+            _CACHE.update(
+                data=data,
+                parsed=parsed,
+                last_sync=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                source="Admin upload",
+                error=None,
+            )
+            return True
+        except Exception as exc:
+            traceback.print_exc()
+            _CACHE["error"] = str(exc)
+            return False
+
+
+def get_admin_status() -> dict:
+    """Return a JSON-friendly status dict for the admin panel.
+    Safe to call from any thread — returns a snapshot of current state."""
+    with _lock:
+        return {
+            "last_sync": _CACHE["last_sync"],
+            "source": _CACHE["source"],
+            "error": _CACHE["error"],
+            "has_data": _CACHE["data"] is not None,
+        }
 
 # ── Smoke test ────────────────────────────────────────────────────────
 
