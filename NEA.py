@@ -79,8 +79,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 DEFAULT_SHEET_URL = os.environ.get(
     "NEA_SHEET_URL",
-    "https://docs.google.com/spreadsheets/d/1NqnXSPG7GpD9JritgZ_a-wZD5K6CUaQp/"
-    "edit?usp=drive_link&ouid=100967247372173494005&rtpof=true&sd=true",
+    "https://docs.google.com/spreadsheets/d/1PzTJmKWfBe2_mXFgXZlsOhMcxP85q8C7VnczGxaMM2U/edit?usp=sharing",
 )
 CACHE_WORKBOOK_PATH = os.path.join(_HERE, "nea_workbook_cache.xlsx")
 TEMPLATE_PATH = os.path.join(_HERE, "nea_assets", "nea_operational_dashboard_template.html")
