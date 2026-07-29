@@ -32,8 +32,9 @@
 </head>
 <body>
 <div class="nea-wrap">
-  <div class="nea-badge">__NEA_SYNC_BADGE__</div>
+  <div class="nea-badge" id="nea-badge">__NEA_SYNC_BADGE__</div>
 
+  <div id="nea-content">
   <div class="nea-kpi-grid" id="nea-kpi-grid"></div>
 
   <div class="nea-section">
@@ -104,6 +105,7 @@
   </div>
 
   <div class="nea-footnote">Source: NEA Operational Data workbook (live-synced from Google Sheet). Data shown reflects the most recent successful sync.</div>
+  </div>
 </div>
 
 <script>
@@ -349,13 +351,14 @@ function init() {
 }
 
 if (!DATA || Object.keys(DATA).length === 0) {
-  document.querySelector(".nea-wrap").innerHTML =
+  document.getElementById("nea-content").innerHTML =
     '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is loaded yet. ' +
-    'An administrator needs to configure the NEA_SHEET_URL (or wait for the next background sync) for this dashboard to populate.</div>';
+    'See the status badge above for the specific sync error. An administrator needs to fix that ' +
+    '(usually the sheet\'s sharing setting, the NEA_SHEET_URL value, or a tab name mismatch) and wait ' +
+    'for the next background sync, or restart the app.</div>';
 } else {
   init();
 }
 </script>
 </body>
 </html>
-
