@@ -637,7 +637,23 @@ def bootstrap():
     """Call once at app startup. Non-blocking-ish: does one synchronous
     attempt (so the very first page load already has real data if the
     network is up), then hands off to the background timer."""
-    threading.Thread(target=refresh, daemon=True).start()
+    configured_url = os.environ.get("NEA_SHEET_URL")
+    if configured_url:
+        print(f"[NEA DEBUG] NEA_SHEET_URL is set ({configured_url[:60]}...) — attempting sync.")
+    else:
+        print("[NEA DEBUG] NEA_SHEET_URL is NOT set — falling back to the placeholder "
+              "DEFAULT_SHEET_URL baked into NEA.py, which will almost certainly fail "
+              "unless that placeholder sheet happens to be shared with you.")
+
+    def _bootstrap_and_report():
+        ok = refresh()
+        status = sync_status()
+        if ok:
+            print(f"[NEA DEBUG] Initial sync succeeded: {status['source']} at {status['last_sync']}")
+        else:
+            print(f"[NEA DEBUG] Initial sync FAILED: {status['error']}")
+
+    threading.Thread(target=_bootstrap_and_report, daemon=True).start()
 
 
 def start_background_refresh():
@@ -671,8 +687,14 @@ def render_dashboard_html() -> str:
     status = sync_status()
     if status["last_sync"]:
         badge = f'<i class="fas fa-satellite-dish"></i> {status["source"]} · synced {status["last_sync"]}'
+    elif status["error"]:
+        # A sync was attempted and failed, and there is no bundled fallback
+        # to fall back to — surface the real reason here so an admin can
+        # diagnose it from the page itself, not just Render's logs.
+        safe_err = str(status["error"]).replace("<", "&lt;").replace(">", "&gt;")
+        badge = (f'<i class="fas fa-triangle-exclamation"></i> NEA sync failed: {safe_err}')
     else:
-        badge = '<i class="fas fa-triangle-exclamation"></i> Showing bundled snapshot (live sync pending)'
+        badge = '<i class="fas fa-triangle-exclamation"></i> No sync has completed yet (still starting up, or NEA_SHEET_URL is not set)'
     html = template.replace("__NEA_DATA_JSON__", data_json).replace("__NEA_SYNC_BADGE__", badge)
     return html
 def render_forecast_lab_html() -> str:
