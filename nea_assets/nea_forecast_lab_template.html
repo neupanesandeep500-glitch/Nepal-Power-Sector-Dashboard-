@@ -2,15 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>NEA Forecast Lab</title>
-<script src="/nea-vendor/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
   * { box-sizing:border-box; }
   body { margin:0; font-family:-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; background:#f4f7fb; color:#20293a; }
-  .wrap { padding:16px 18px 30px; }
+  .wrap { padding:16px 18px 40px; max-width:1180px; margin:0 auto; }
   .panel { background:#fff; border-radius:12px; padding:16px 18px; margin-bottom:16px; box-shadow:0 1px 4px rgba(20,30,60,0.08); }
   .panel h3 { margin:0 0 12px; font-size:15px; font-weight:800; color:#0d47a1; display:flex; gap:8px; align-items:center; }
+  .panel h4 { margin:0 0 10px; font-size:13px; font-weight:800; color:#37425a; display:flex; gap:8px; align-items:center; }
   .controls { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; }
   .field { display:flex; flex-direction:column; gap:4px; min-width:220px; }
   .field label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; color:#647085; }
@@ -19,12 +21,24 @@
     padding:10px 22px; border-radius:8px; font-weight:700; cursor:pointer; font-size:13px; }
   button#run-btn:hover { opacity:0.92; }
   button#run-btn:disabled { opacity:0.5; cursor:not-allowed; }
-  .chart-box { position:relative; height:400px; margin-top:14px; }
-  .meta-row { display:flex; flex-wrap:wrap; gap:20px; margin-top:12px; font-size:13px; }
-  .meta-row .item { background:#eef3fb; border-radius:6px; padding:6px 12px; }
-  .meta-row .item b { color:#0d47a1; }
-  .error-box { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; display:none; }
-  .loading { font-size:13px; color:#647085; display:none; }
+  .chart-box { position:relative; height:360px; margin-top:10px; }
+  .error-box { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; display:none; margin-bottom:14px; }
+  .loading { font-size:13px; color:#647085; display:none; margin-bottom:10px; }
+  .legend-note { font-size:11.5px; color:#7787a0; margin-top:6px; }
+  .legend-note .swatch { display:inline-block; width:22px; height:3px; border-radius:2px; vertical-align:middle; margin:0 5px 0 12px; }
+  .legend-note .swatch.first { margin-left:0; }
+  .legend-note .band { display:inline-block; width:22px; height:10px; border-radius:2px; vertical-align:middle; margin:0 5px 0 12px; background:rgba(198,40,40,0.15); }
+
+  table.metrics-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.metrics-table th, table.metrics-table td { padding:7px 10px; text-align:right; border-bottom:1px solid #eef1f6; white-space:nowrap; }
+  table.metrics-table th:first-child, table.metrics-table td:first-child { text-align:left; }
+  table.metrics-table th { color:#647085; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.02em; }
+  table.metrics-table tr.scenario-row td { background:#eef6ef; font-weight:700; }
+  table.metrics-table td.model-cell { text-align:left; color:#37425a; font-weight:600; max-width:260px; white-space:normal; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:20px; background:#eef3fb; color:#0d47a1; font-size:11px; font-weight:700; }
+  .badge.scenario { background:#e3f2e5; color:#1b5e20; }
+  .component-charts { display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px; }
+  .component-charts .panel { margin-bottom:0; }
 </style>
 </head>
 <body>
@@ -48,90 +62,677 @@
         <button id="run-btn"><i class="fas fa-play"></i> Run Forecast</button>
       </div>
     </div>
-    <div class="loading" id="loading-msg"><i class="fas fa-spinner fa-spin"></i> Running forecast…</div>
-    <div class="error-box" id="error-box"></div>
-    <div class="chart-box"><canvas id="forecast-chart"></canvas></div>
-    <div class="meta-row" id="meta-row"></div>
+    <div class="legend-note">
+      <span class="swatch first" style="background:#1565c0;"></span>History
+      <span class="swatch" style="background:#c62828;"></span>Forecast (solid line)
+      <span class="band"></span>80% confidence band (shaded area)
+    </div>
   </div>
+
+  <div class="loading" id="loading-msg"><i class="fas fa-spinner fa-spin"></i> Running forecast…</div>
+  <div class="error-box" id="error-box"></div>
+
+  <div class="panel" id="stats-panel" style="display:none;">
+    <h3><i class="fas fa-chart-bar"></i> Statistical Significance</h3>
+    <div id="stats-table-wrap"></div>
+  </div>
+
+  <div class="panel" id="scenario-panel" style="display:none;">
+    <h4><i class="fas fa-layer-group"></i> Final Scenario <span class="badge scenario" id="scenario-badge"></span></h4>
+    <div class="chart-box"><canvas id="scenario-chart"></canvas></div>
+  </div>
+
+  <div class="component-charts" id="component-charts"></div>
 </div>
 
 <script>
-let PARAMS = [];
-let chart;
-
-async function loadParams() {
-  const res = await fetch("/api/nea-forecast-params");
-  PARAMS = await res.json();
-  const paramSelect = document.getElementById("param-select");
-  paramSelect.innerHTML = "";
-  if (!PARAMS.length) {
-    const errBox = document.getElementById("error-box");
-    errBox.textContent = "No NEA operational data has synced yet, so there's nothing to forecast. " +
-      "Check that NEA_SHEET_URL is configured and the sheet is shared as \"Anyone with the link\", " +
-      "then wait for the next background sync or restart the app.";
-    errBox.style.display = "block";
-    document.getElementById("run-btn").disabled = true;
-    return false;
-  }
-  PARAMS.forEach((p, i) => {
-    const opt = document.createElement("option");
-    opt.value = i; opt.textContent = p.label + (p.monthly ? "  (monthly)" : "  (annual)");
-    paramSelect.appendChild(opt);
-  });
-  paramSelect.addEventListener("change", updateModelChoices);
-  updateModelChoices();
-  return true;
+/* =============================================================================
+ * 1. SEEDED RANDOM NUMBER GENERATION (mirrors the deterministic demo dataset
+ *    that the original Python backend produced with np.random.seed(42))
+ * ============================================================================= */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const _rng = mulberry32(42);
+function gauss(mean, std) {
+  let u = 0, v = 0;
+  while (u === 0) u = _rng();
+  while (v === 0) v = _rng();
+  const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return mean + z * std;
 }
 
-function updateModelChoices() {
-  const idx = document.getElementById("param-select").value;
-  const p = PARAMS[idx];
-  const modelSelect = document.getElementById("model-select");
-  modelSelect.innerHTML = "";
-  const models = [
-    ["linear","Linear Regression"], ["holt","Holt Exponential Smoothing (trend)"],
-    ["moving","Moving Average"], ["arima","ARIMA (auto order)"], ["hybrid","Hybrid (Linear + ARIMA)"],
+/* =============================================================================
+ * 2. DEMO DATA  (ported 1:1 from generate_nea_data() in the Python backend)
+ * ============================================================================= */
+function genYears(start, periods) {
+  return Array.from({ length: periods }, (_, i) => String(start + i));
+}
+function genMonths(startYear, periods) {
+  const out = [];
+  let y = startYear, m = 1;
+  for (let i = 0; i < periods; i++) {
+    out.push(`${y}-${String(m).padStart(2, "0")}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+function trendArr(base, slope, noise, n) {
+  const arr = [];
+  for (let i = 0; i < n; i++) arr.push(Math.max(0, base + slope * i + gauss(0, noise)));
+  return arr;
+}
+
+function generateNeaData() {
+  const nAnnual = 10;
+  const years = genYears(2015, nAnnual);
+  return {
+    parameters: [
+      {
+        key: "system_loss", label: "System Loss", monthly: false,
+        series: [
+          { key: "transmission_loss", label: "Transmission Loss (%)", values: trendArr(3.20, -0.10, 0.05, nAnnual), scenario_role: "component" },
+          { key: "distribution_loss", label: "Distribution Loss (%)", values: trendArr(16.50, -0.35, 0.15, nAnnual), scenario_role: "component" },
+          { key: "avg_system_loss", label: "Average System Loss (%)", values: trendArr(19.70, -0.45, 0.18, nAnnual), scenario_role: "aggregate", formula: "sum", source_keys: ["transmission_loss", "distribution_loss"] }
+        ],
+        labels: years
+      },
+      {
+        key: "capacity_balance", label: "Capacity Balance", monthly: false,
+        series: [
+          { key: "installed_capacity", label: "Installed Capacity (MW)", values: trendArr(1200, 65, 20, nAnnual), scenario_role: "component" },
+          { key: "peak_demand", label: "Peak Demand (MW)", values: trendArr(1100, 60, 25, nAnnual), scenario_role: "component" },
+          { key: "reserve_margin", label: "Reserve Margin (MW)", values: trendArr(100, 5, 10, nAnnual), scenario_role: "derived", formula: "diff", source_keys: ["installed_capacity", "peak_demand"] }
+        ],
+        labels: years
+      },
+      {
+        key: "mw_balance", label: "System MW Balance", monthly: false,
+        series: [
+          { key: "generation", label: "Generation (MW)", values: trendArr(900, 45, 20, nAnnual), scenario_role: "component" },
+          { key: "import_mw", label: "Import (MW)", values: trendArr(200, 20, 10, nAnnual), scenario_role: "component" },
+          { key: "demand_mw", label: "Demand (MW)", values: trendArr(1050, 55, 25, nAnnual), scenario_role: "component" },
+          { key: "surplus_deficit", label: "Surplus / Deficit (MW)", values: trendArr(50, 10, 15, nAnnual), scenario_role: "derived", formula: "balance", source_keys: ["generation", "import_mw", "demand_mw"] }
+        ],
+        labels: years
+      },
+      {
+        key: "revenue_by_category", label: "Revenue by Consumer Category", monthly: false,
+        series: [
+          { key: "domestic_rev", label: "Domestic Revenue (Rs. Million)", values: trendArr(8000, 620, 150, nAnnual), scenario_role: "component" },
+          { key: "commercial_rev", label: "Commercial Revenue (Rs. Million)", values: trendArr(3000, 260, 80, nAnnual), scenario_role: "component" },
+          { key: "industrial_rev", label: "Industrial Revenue (Rs. Million)", values: trendArr(5000, 350, 100, nAnnual), scenario_role: "component" },
+          { key: "total_revenue", label: "Total Revenue (Rs. Million)", values: trendArr(16000, 1230, 250, nAnnual), scenario_role: "aggregate", formula: "sum", source_keys: ["domestic_rev", "commercial_rev", "industrial_rev"] }
+        ],
+        labels: years
+      },
+      {
+        key: "consumers_by_category", label: "Consumers by Category", monthly: false,
+        series: [
+          { key: "domestic_cons", label: "Domestic Consumers", values: trendArr(4200000, 135000, 20000, nAnnual), scenario_role: "component" },
+          { key: "commercial_cons", label: "Commercial Consumers", values: trendArr(150000, 5000, 2000, nAnnual), scenario_role: "component" },
+          { key: "industrial_cons", label: "Industrial Consumers", values: trendArr(25000, 1000, 500, nAnnual), scenario_role: "component" },
+          { key: "total_consumers", label: "Total Consumers", values: trendArr(4375000, 141000, 21000, nAnnual), scenario_role: "aggregate", formula: "sum", source_keys: ["domestic_cons", "commercial_cons", "industrial_cons"] }
+        ],
+        labels: years
+      },
+      {
+        key: "total_generation", label: "Total Energy Generated (GWh)", monthly: false,
+        series: [{ key: "total_generation", label: "Total Generation (GWh)", values: trendArr(6500, 350, 120, nAnnual), scenario_role: "single" }],
+        labels: years
+      },
+      {
+        key: "monthly_peak_demand", label: "Monthly Peak Demand (MW)", monthly: true,
+        series: [{
+          key: "monthly_peak", label: "Peak Demand (MW)",
+          values: Array.from({ length: 36 }, (_, i) => 1200 + 200 * Math.sin(i * Math.PI / 6) + gauss(0, 30) + i * 5),
+          scenario_role: "single"
+        }],
+        labels: genMonths(2021, 36)
+      }
+    ]
+  };
+}
+const NEA_DATA = generateNeaData();
+
+/* =============================================================================
+ * 3. STATS HELPERS
+ * ============================================================================= */
+function stdev(arr) {
+  const n = arr.length;
+  if (n === 0) return 0;
+  const m = arr.reduce((a, b) => a + b, 0) / n;
+  return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+}
+function round4(x) { return x === null || x === undefined || Number.isNaN(x) ? null : Math.round(x * 10000) / 10000; }
+function round2(x) { return x === null || x === undefined || Number.isNaN(x) ? null : Math.round(x * 100) / 100; }
+
+function calcMetrics(actual, fitted) {
+  const pairs = [];
+  for (let i = 0; i < actual.length; i++) {
+    const f = fitted[i];
+    if (f === null || f === undefined || Number.isNaN(f)) continue;
+    pairs.push([actual[i], f]);
+  }
+  if (pairs.length < 2) return { "R²": null, RMSE: null, MAE: null, MAPE: null };
+  const a = pairs.map(p => p[0]), f = pairs.map(p => p[1]);
+  const meanA = a.reduce((s, v) => s + v, 0) / a.length;
+  let ssRes = 0, ssTot = 0, sae = 0, mapeSum = 0, mapeCount = 0;
+  for (let i = 0; i < a.length; i++) {
+    const e = a[i] - f[i];
+    ssRes += e * e; ssTot += (a[i] - meanA) ** 2; sae += Math.abs(e);
+    if (a[i] !== 0) { mapeSum += Math.abs(e / a[i]); mapeCount++; }
+  }
+  const r2 = ssTot === 0 ? null : 1 - ssRes / ssTot;
+  const rmse = Math.sqrt(ssRes / a.length);
+  const mae = sae / a.length;
+  const mape = mapeCount > 0 ? (mapeSum / mapeCount) * 100 : null;
+  return { "R²": round4(r2), RMSE: round4(rmse), MAE: round4(mae), MAPE: round2(mape) };
+}
+
+/* =============================================================================
+ * 4. LINEAR ALGEBRA (small OLS solver used by the AR/ARIMA/SARIMA models)
+ * ============================================================================= */
+function solveLinearSystem(A, b) {
+  const n = A.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let maxRow = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[maxRow][col])) maxRow = r;
+    [M[col], M[maxRow]] = [M[maxRow], M[col]];
+    if (Math.abs(M[col][col]) < 1e-9) M[col][col] = 1e-9;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const factor = M[r][col] / M[col][col];
+      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+function olsFit(Xrows, y) {
+  const p = Xrows[0].length, n = Xrows.length;
+  const XtX = Array.from({ length: p }, () => Array(p).fill(0));
+  const Xty = Array(p).fill(0);
+  for (let i = 0; i < n; i++) {
+    for (let a = 0; a < p; a++) {
+      Xty[a] += Xrows[i][a] * y[i];
+      for (let b = 0; b < p; b++) XtX[a][b] += Xrows[i][a] * Xrows[i][b];
+    }
+  }
+  return solveLinearSystem(XtX, Xty);
+}
+function diffArr(arr, d) {
+  let cur = arr.slice();
+  for (let k = 0; k < d; k++) {
+    const next = [];
+    for (let i = 1; i < cur.length; i++) next.push(cur[i] - cur[i - 1]);
+    cur = next;
+  }
+  return cur;
+}
+function seasonalDiffArr(arr, lag) {
+  const next = [];
+  for (let i = lag; i < arr.length; i++) next.push(arr[i] - arr[i - lag]);
+  return next;
+}
+function fitAR(series, p) {
+  const n = series.length;
+  if (n <= p + 2) return null;
+  const X = [], y = [];
+  for (let i = p; i < n; i++) {
+    const row = [1];
+    for (let l = 1; l <= p; l++) row.push(series[i - l]);
+    X.push(row); y.push(series[i]);
+  }
+  const coef = olsFit(X, y);
+  const fitted = X.map(row => row.reduce((s, v, idx) => s + v * coef[idx], 0));
+  const resid = y.map((v, i) => v - fitted[i]);
+  return { coef, fitted, resid, p };
+}
+
+/* =============================================================================
+ * 5. FORECASTING MODELS
+ * ============================================================================= */
+function forecastLinear(values, nAhead) {
+  const n = values.length;
+  const x = Array.from({ length: n }, (_, i) => i);
+  const mx = x.reduce((a, b) => a + b, 0) / n;
+  const my = values.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) { num += (x[i] - mx) * (values[i] - my); den += (x[i] - mx) ** 2; }
+  const slope = den === 0 ? 0 : num / den;
+  const intercept = my - slope * mx;
+  const fitted = x.map(xi => intercept + slope * xi);
+  const std = stdev(values.map((v, i) => v - fitted[i]));
+  const pred = [], lo = [], hi = [];
+  for (let h = 1; h <= nAhead; h++) {
+    const p = intercept + slope * (n - 1 + h);
+    pred.push(p); lo.push(p - 1.28 * std); hi.push(p + 1.28 * std);
+  }
+  const metrics = calcMetrics(values, fitted);
+  metrics.Model = "Linear Regression";
+  return { pred, lo, hi, fitted, base: values[n - 1], metrics };
+}
+
+function forecastHolt(values, nAhead) {
+  const n = values.length;
+  let best = null;
+  for (let a = 0.1; a <= 0.9; a += 0.1) {
+    for (let b = 0.1; b <= 0.9; b += 0.1) {
+      let level = values[0], trend = values[1] - values[0];
+      const fitted = [values[0]];
+      let sse = 0;
+      for (let i = 1; i < n; i++) {
+        const f = level + trend;
+        sse += (values[i] - f) ** 2;
+        const newLevel = a * values[i] + (1 - a) * (level + trend);
+        const newTrend = b * (newLevel - level) + (1 - b) * trend;
+        fitted.push(f);
+        level = newLevel; trend = newTrend;
+      }
+      if (!best || sse < best.sse) best = { sse, a, b, fitted: fitted.slice(), level, trend };
+    }
+  }
+  const std = stdev(values.slice(1).map((v, i) => v - best.fitted[i + 1]));
+  const pred = [], lo = [], hi = [];
+  for (let h = 1; h <= nAhead; h++) {
+    const p = best.level + h * best.trend;
+    pred.push(p); lo.push(p - 1.28 * std * Math.sqrt(h)); hi.push(p + 1.28 * std * Math.sqrt(h));
+  }
+  const metrics = calcMetrics(values, best.fitted);
+  metrics.Model = `Holt Exponential Smoothing (α=${best.a.toFixed(1)}, β=${best.b.toFixed(1)})`;
+  return { pred, lo, hi, fitted: best.fitted, base: values[n - 1], metrics };
+}
+
+function forecastMA(values, nAhead) {
+  const n = values.length;
+  const w = n > 3 ? 3 : Math.max(1, n - 1);
+  const fitted = values.map((_, i) => {
+    const slice = values.slice(Math.max(0, i - w + 1), i + 1);
+    return slice.reduce((a, b) => a + b, 0) / slice.length;
+  });
+  const last = values.slice(-w).reduce((a, b) => a + b, 0) / w;
+  const std = stdev(values.map((v, i) => v - fitted[i]));
+  const pred = Array(nAhead).fill(last);
+  const metrics = calcMetrics(values, fitted);
+  metrics.Model = `Moving Average (w=${w})`;
+  return { pred, lo: pred.map(p => p - 1.28 * std), hi: pred.map(p => p + 1.28 * std), fitted, base: values[n - 1], metrics };
+}
+
+// ARIMA(p,d,0) approximation: automatic (d,p) selection by AIC, fit via OLS on a
+// (possibly differenced) series, then reconstructed back to the original scale.
+function forecastARIMA(values, nAhead) {
+  const n = values.length;
+  let best = null;
+  for (const d of [0, 1]) {
+    const series = d === 0 ? values.slice() : diffArr(values, 1);
+    const maxP = Math.min(3, series.length - 3);
+    if (maxP < 1) continue;
+    for (let p = 1; p <= maxP; p++) {
+      const fit = fitAR(series, p);
+      if (!fit) continue;
+      const rss = fit.resid.reduce((s, e) => s + e * e, 0);
+      const nEff = fit.resid.length;
+      if (nEff <= 0) continue;
+      const k = p + 1;
+      const aic = nEff * Math.log(Math.max(rss / nEff, 1e-10)) + 2 * k;
+      const bic = nEff * Math.log(Math.max(rss / nEff, 1e-10)) + k * Math.log(nEff);
+      if (!best || aic < best.aic) best = { d, p, fit, aic, bic, series };
+    }
+  }
+  if (!best) {
+    const lr = forecastLinear(values, nAhead);
+    lr.metrics.Model = "Linear (ARIMA fallback — insufficient data)";
+    return lr;
+  }
+  const { d, p, fit, aic, bic, series } = best;
+  const fittedOrig = Array(n).fill(null);
+  if (d === 0) {
+    for (let i = p; i < n; i++) fittedOrig[i] = fit.fitted[i - p];
+  } else {
+    for (let idx = 0; idx < fit.fitted.length; idx++) {
+      const i = p + idx, t = i + 1;
+      fittedOrig[t] = values[t - 1] + fit.fitted[idx];
+    }
+  }
+  const coef = fit.coef;
+  let bufArr = d === 0 ? values.slice(n - p) : series.slice(series.length - p);
+  const diffPreds = [];
+  const buf = bufArr.slice();
+  for (let h = 0; h < nAhead; h++) {
+    let val = coef[0];
+    for (let l = 1; l <= p; l++) val += coef[l] * buf[buf.length - l];
+    diffPreds.push(val); buf.push(val);
+  }
+  let pred;
+  if (d === 0) {
+    pred = diffPreds;
+  } else {
+    pred = []; let level = values[n - 1];
+    for (let h = 0; h < nAhead; h++) { level += diffPreds[h]; pred.push(level); }
+  }
+  const resids = [];
+  for (let i = 0; i < n; i++) if (fittedOrig[i] !== null) resids.push(values[i] - fittedOrig[i]);
+  const std = stdev(resids);
+  const lo = pred.map((v, h) => v - 1.28 * std * Math.sqrt(h + 1));
+  const hi = pred.map((v, h) => v + 1.28 * std * Math.sqrt(h + 1));
+  const metrics = calcMetrics(values, fittedOrig);
+  metrics.AIC = round2(aic); metrics.BIC = round2(bic);
+  metrics.Model = `ARIMA(${p},${d},0) — AR approximation`;
+  return { pred, lo, hi, fitted: fittedOrig, base: values[n - 1], metrics };
+}
+
+// SARIMA approximation: seasonal-difference first, then apply the same AR
+// machinery as ARIMA on the seasonally adjusted series. Falls back to ARIMA
+// automatically whenever there isn't enough history for the seasonal period.
+function forecastSARIMA(values, nAhead, monthly) {
+  const seasonalPeriod = monthly ? 12 : 4;
+  const n = values.length;
+  if (n < seasonalPeriod * 2) {
+    const res = forecastARIMA(values, nAhead);
+    res.metrics.Model = `ARIMA (SARIMA fallback — series too short for seasonal=${seasonalPeriod})`;
+    return res;
+  }
+  const sdiff = seasonalDiffArr(values, seasonalPeriod);
+  let best = null;
+  for (const d of [0, 1]) {
+    const series = d === 0 ? sdiff.slice() : diffArr(sdiff, 1);
+    const maxP = Math.min(2, series.length - 3);
+    if (maxP < 1) continue;
+    for (let p = 1; p <= maxP; p++) {
+      const fit = fitAR(series, p);
+      if (!fit) continue;
+      const rss = fit.resid.reduce((s, e) => s + e * e, 0);
+      const nEff = fit.resid.length;
+      if (nEff <= 0) continue;
+      const k = p + 1;
+      const aic = nEff * Math.log(Math.max(rss / nEff, 1e-10)) + 2 * k;
+      const bic = nEff * Math.log(Math.max(rss / nEff, 1e-10)) + k * Math.log(nEff);
+      if (!best || aic < best.aic) best = { d, p, fit, aic, bic, series };
+    }
+  }
+  if (!best) {
+    const res = forecastARIMA(values, nAhead);
+    res.metrics.Model = "ARIMA (SARIMA fit failed — fallback)";
+    return res;
+  }
+  const { d, p, fit, aic, bic, series } = best;
+  const fittedOrig = Array(n).fill(null);
+  if (d === 0) {
+    for (let i = p; i < sdiff.length; i++) {
+      const t = i + seasonalPeriod;
+      fittedOrig[t] = values[t - seasonalPeriod] + fit.fitted[i - p];
+    }
+  } else {
+    for (let idx = 0; idx < fit.fitted.length; idx++) {
+      const i = p + idx, j = i + 1, t = j + seasonalPeriod;
+      const sdiffJ = sdiff[j - 1] + fit.fitted[idx];
+      fittedOrig[t] = values[t - seasonalPeriod] + sdiffJ;
+    }
+  }
+  const coef = fit.coef;
+  let bufArr = d === 0 ? sdiff.slice(sdiff.length - p) : series.slice(series.length - p);
+  const buf = bufArr.slice();
+  const stepPreds = [];
+  for (let h = 0; h < nAhead; h++) {
+    let val = coef[0];
+    for (let l = 1; l <= p; l++) val += coef[l] * buf[buf.length - l];
+    stepPreds.push(val); buf.push(val);
+  }
+  let sdiffPreds;
+  if (d === 0) {
+    sdiffPreds = stepPreds;
+  } else {
+    sdiffPreds = []; let level = sdiff[sdiff.length - 1];
+    for (let h = 0; h < nAhead; h++) { level += stepPreds[h]; sdiffPreds.push(level); }
+  }
+  const extended = values.slice();
+  const pred = [];
+  for (let h = 0; h < nAhead; h++) {
+    const t = n + h, refIdx = t - seasonalPeriod;
+    const refVal = extended[refIdx];
+    const val = refVal + sdiffPreds[h];
+    pred.push(val); extended.push(val);
+  }
+  const resids = [];
+  for (let i = 0; i < n; i++) if (fittedOrig[i] !== null) resids.push(values[i] - fittedOrig[i]);
+  const std = stdev(resids);
+  const lo = pred.map((v, h) => v - 1.28 * std * Math.sqrt(h + 1));
+  const hi = pred.map((v, h) => v + 1.28 * std * Math.sqrt(h + 1));
+  const metrics = calcMetrics(values, fittedOrig);
+  metrics.AIC = round2(aic); metrics.BIC = round2(bic);
+  metrics.Model = `SARIMA(${p},${d},0)(seasonal=${seasonalPeriod}) — AR approximation`;
+  return { pred, lo, hi, fitted: fittedOrig, base: values[n - 1], metrics };
+}
+
+function forecastHybrid(values, nAhead, monthly) {
+  const lin = forecastLinear(values, nAhead);
+  const ar = monthly ? forecastSARIMA(values, nAhead, monthly) : forecastARIMA(values, nAhead);
+  const pred = lin.pred.map((v, i) => (v + ar.pred[i]) / 2);
+  const lo = lin.lo.map((v, i) => Math.min(v, ar.lo[i]));
+  const hi = lin.hi.map((v, i) => Math.max(v, ar.hi[i]));
+  const fitted = values.map((_, i) => {
+    const a = lin.fitted[i], b = ar.fitted[i];
+    const aOk = a !== null && a !== undefined && !Number.isNaN(a);
+    const bOk = b !== null && b !== undefined && !Number.isNaN(b);
+    if (aOk && bOk) return (a + b) / 2;
+    if (aOk) return a;
+    if (bOk) return b;
+    return null;
+  });
+  const metrics = calcMetrics(values, fitted);
+  metrics.Model = `Hybrid (Linear + ${ar.metrics.Model.split(" ")[0]})`;
+  return { pred, lo, hi, fitted, base: values[values.length - 1], metrics };
+}
+
+function runModel(modelName, values, nAhead, monthly) {
+  switch (modelName) {
+    case "linear": return forecastLinear(values, nAhead);
+    case "holt": return forecastHolt(values, nAhead);
+    case "moving": return forecastMA(values, nAhead);
+    case "arima": return forecastARIMA(values, nAhead);
+    case "sarima": return forecastSARIMA(values, nAhead, monthly);
+    case "hybrid": return forecastHybrid(values, nAhead, monthly);
+    default: return forecastLinear(values, nAhead);
+  }
+}
+
+/* =============================================================================
+ * 6. SCENARIO CALCULATOR — recombines the *forecasted* component series
+ *    (not just their last historical point) into the final aggregate/derived
+ *    series for every past AND future year.
+ * ============================================================================= */
+function calculateScenario(forecasts, seriesMeta) {
+  for (const s of seriesMeta) {
+    const role = s.scenario_role;
+    if (role !== "aggregate" && role !== "derived") continue;
+    const formula = s.formula || "sum";
+    const src = s.source_keys || [];
+
+    if (formula === "sum" && src.length >= 2) {
+      let accPast = null, accPred = null, accLo = null, accHi = null;
+      for (const k of src) {
+        const f = forecasts[k];
+        if (!f) continue;
+        const lo = f.pred_lo || f.pred_values.map(v => v * 0.95);
+        const hi = f.pred_hi || f.pred_values.map(v => v * 1.05);
+        accPast = accPast ? accPast.map((v, i) => v + f.past_values[i]) : f.past_values.slice();
+        accPred = accPred ? accPred.map((v, i) => v + f.pred_values[i]) : f.pred_values.slice();
+        accLo = accLo ? accLo.map((v, i) => v + lo[i]) : lo.slice();
+        accHi = accHi ? accHi.map((v, i) => v + hi[i]) : hi.slice();
+      }
+      if (accPast) return { key: s.key, label: s.label, past_values: accPast, pred_values: accPred, pred_lo: accLo, pred_hi: accHi, base_value: accPast[accPast.length - 1] };
+    } else if (formula === "diff" && src.length >= 2) {
+      const f1 = forecasts[src[0]], f2 = forecasts[src[1]];
+      if (f1 && f2) {
+        const p = f1.past_values.map((v, i) => v - f2.past_values[i]);
+        const pr = f1.pred_values.map((v, i) => v - f2.pred_values[i]);
+        let lo = null, hi = null;
+        if (f1.pred_lo && f2.pred_hi) {
+          lo = f1.pred_values.map((v, i) => v - f2.pred_hi[i]);
+          hi = f1.pred_hi.map((v, i) => v - f2.pred_lo[i]);
+        }
+        return { key: s.key, label: s.label, past_values: p, pred_values: pr, pred_lo: lo, pred_hi: hi, base_value: p[p.length - 1] };
+      }
+    } else if (formula === "balance" && src.length >= 3) {
+      const f1 = forecasts[src[0]], f2 = forecasts[src[1]], f3 = forecasts[src[2]];
+      if (f1 && f2 && f3) {
+        const p = f1.past_values.map((v, i) => v + f2.past_values[i] - f3.past_values[i]);
+        const pr = f1.pred_values.map((v, i) => v + f2.pred_values[i] - f3.pred_values[i]);
+        return { key: s.key, label: s.label, past_values: p, pred_values: pr, pred_lo: null, pred_hi: null, base_value: p[p.length - 1] };
+      }
+    }
+  }
+  return null;
+}
+
+/* =============================================================================
+ * 7. RENDERING
+ * ============================================================================= */
+let PARAMS = NEA_DATA.parameters;
+let componentChartInstances = [];
+let scenarioChartInstance = null;
+
+function chartConfig(pastLabels, predLabels, pastValues, predValues, lo, hi, label, baseValue) {
+  const allLabels = pastLabels.concat(predLabels);
+  const pastSeries = pastValues.concat(Array(predLabels.length).fill(null));
+  const predSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(predValues);
+  const datasets = [
+    { label: "History", data: pastSeries, borderColor: "#1565c0", backgroundColor: "#1565c0", tension: 0.2, borderWidth: 2, pointRadius: 3 },
+    { label: "Forecast", data: predSeries, borderColor: "#c62828", backgroundColor: "#c62828", tension: 0.2, borderWidth: 2.5, pointRadius: 3 }
   ];
-  if (p && p.monthly) models.push(["sarima","SARIMA (seasonal, period=12)"]);
-  models.forEach(([val, label]) => {
-    const opt = document.createElement("option");
-    opt.value = val; opt.textContent = label;
-    modelSelect.appendChild(opt);
-  });
+  if (lo && hi) {
+    const loSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(lo);
+    const hiSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(hi);
+    datasets.push({ label: "Upper (80% CI)", data: hiSeries, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.16)", fill: "+1", pointRadius: 0, borderWidth: 0, order: 1 });
+    datasets.push({ label: "Lower (80% CI)", data: loSeries, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.16)", fill: false, pointRadius: 0, borderWidth: 0, order: 1 });
+  }
+  return {
+    type: "line",
+    data: { labels: allLabels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { position: "bottom" }, title: { display: true, text: label } },
+      scales: { y: { beginAtZero: false } }
+    }
+  };
 }
 
-async function runForecast() {
-  const idx = document.getElementById("param-select").value;
-  const p = PARAMS[idx];
-  if (!p) {
-    const errBox = document.getElementById("error-box");
-    errBox.textContent = "No parameter selected — no NEA data may be available yet.";
-    errBox.style.display = "block";
-    return;
-  }
-  const model = document.getElementById("model-select").value;
-  const nAhead = parseInt(document.getElementById("n-ahead").value || "5", 10);
+function metricsTableRows(rows) {
+  const cols = ["R²", "RMSE", "MAE", "MAPE", "AIC", "BIC"];
+  let html = '<table class="metrics-table"><thead><tr><th>Series</th><th>Model</th>' +
+    cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+  rows.forEach(r => {
+    html += `<tr class="${r.scenario ? "scenario-row" : ""}"><td>${r.label}</td><td class="model-cell">${r.model || "—"}</td>` +
+      cols.map(c => `<td>${r.metrics && r.metrics[c] !== undefined && r.metrics[c] !== null ? r.metrics[c] : "—"}</td>`).join("") +
+      "</tr>";
+  });
+  html += "</tbody></table>";
+  return html;
+}
+
+function clearComponentCharts() {
+  componentChartInstances.forEach(c => c.destroy());
+  componentChartInstances = [];
+  document.getElementById("component-charts").innerHTML = "";
+}
+
+function runForecast() {
   const errBox = document.getElementById("error-box");
   const loading = document.getElementById("loading-msg");
+  const statsPanel = document.getElementById("stats-panel");
+  const scenarioPanel = document.getElementById("scenario-panel");
+  errBox.style.display = "none";
+  statsPanel.style.display = "none";
+  scenarioPanel.style.display = "none";
+  clearComponentCharts();
+  if (scenarioChartInstance) { scenarioChartInstance.destroy(); scenarioChartInstance = null; }
+
   if (typeof Chart === "undefined") {
-    errBox.textContent = "The charting library did not load, so the forecast can't be drawn. " +
-      "Try reloading the page; if this keeps happening, check that /nea-vendor/chart.umd.min.js is reachable.";
+    errBox.textContent = "The charting library did not load, so the forecast can't be drawn. Check your connection and reload.";
     errBox.style.display = "block";
     return;
   }
-  errBox.style.display = "none";
+
+  const idx = document.getElementById("param-select").value;
+  const param = PARAMS[idx];
+  if (!param) { errBox.textContent = "No parameter selected."; errBox.style.display = "block"; return; }
+  const modelName = document.getElementById("model-select").value;
+  const nAhead = Math.max(1, Math.min(20, parseInt(document.getElementById("n-ahead").value || "5", 10)));
+
   loading.style.display = "block";
   document.getElementById("run-btn").disabled = true;
+
   try {
-    const res = await fetch("/api/nea-forecast", {
-      method: "POST", headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({ param_key: p.value, model, n_ahead: nAhead, monthly: !!p.monthly }),
+    const forecasts = {};
+    const metricRows = [];
+
+    param.series.forEach(s => {
+      if (s.scenario_role === "aggregate" || s.scenario_role === "derived") return;
+      const res = runModel(modelName, s.values, nAhead, param.monthly);
+      forecasts[s.key] = {
+        key: s.key, label: s.label,
+        past_values: s.values, pred_values: res.pred,
+        pred_lo: res.lo, pred_hi: res.hi, base_value: res.base
+      };
+      metricRows.push({ label: s.label, model: res.metrics.Model, metrics: res.metrics, scenario: false });
     });
-    const data = await res.json();
-    if (data.error) { throw new Error(data.error); }
-    renderChart(data, p.label);
-    renderMeta(data);
+
+    const scenario = calculateScenario(forecasts, param.series);
+    if (scenario) {
+      metricRows.push({
+        label: `${scenario.label} (computed from components)`,
+        model: "Sum/derived from forecasted components",
+        metrics: {}, scenario: true
+      });
+    }
+
+    // Labels
+    const lastLabel = param.labels[param.labels.length - 1];
+    let predLabels;
+    if (param.monthly) {
+      const [ly, lm] = lastLabel.split("-").map(Number);
+      predLabels = [];
+      let y = ly, m = lm;
+      for (let i = 0; i < nAhead; i++) {
+        m++; if (m > 12) { m = 1; y++; }
+        predLabels.push(`${y}-${String(m).padStart(2, "0")}`);
+      }
+    } else {
+      predLabels = Array.from({ length: nAhead }, (_, i) => String(parseInt(lastLabel, 10) + i + 1));
+    }
+
+    // Stats panel
+    document.getElementById("stats-table-wrap").innerHTML = metricsTableRows(metricRows);
+    statsPanel.style.display = "block";
+
+    // Component charts
+    const container = document.getElementById("component-charts");
+    Object.values(forecasts).forEach(f => {
+      const wrap = document.createElement("div");
+      wrap.className = "panel";
+      wrap.innerHTML = `<h4>${f.label}</h4><div class="chart-box"><canvas></canvas></div>`;
+      container.appendChild(wrap);
+      const canvas = wrap.querySelector("canvas");
+      const cfg = chartConfig(param.labels, predLabels, f.past_values, f.pred_values, f.pred_lo, f.pred_hi, f.label, f.base_value);
+      componentChartInstances.push(new Chart(canvas, cfg));
+    });
+
+    // Scenario chart
+    if (scenario) {
+      document.getElementById("scenario-badge").textContent = `= ${scenario.label}`;
+      const cfg = chartConfig(param.labels, predLabels, scenario.past_values, scenario.pred_values, scenario.pred_lo, scenario.pred_hi, scenario.label, scenario.base_value);
+      scenarioChartInstance = new Chart(document.getElementById("scenario-chart"), cfg);
+      scenarioPanel.style.display = "block";
+    }
   } catch (e) {
+    console.error(e);
     errBox.textContent = "Forecast failed: " + e.message;
     errBox.style.display = "block";
   } finally {
@@ -140,43 +741,44 @@ async function runForecast() {
   }
 }
 
-function renderChart(data, label) {
-  const allLabels = data.past_labels.concat(data.pred_labels);
-  const pastSeries = data.past_values.concat(Array(data.pred_labels.length).fill(null));
-  const predSeries = Array(data.past_labels.length - 1).fill(null)
-    .concat([data.base_value]).concat(data.pred_values);
-  const datasets = [
-    { label: "History", data: pastSeries, borderColor:"#1565c0", backgroundColor:"#1565c0", tension:0.2, borderWidth:2, pointRadius:3 },
-    { label: "Forecast", data: predSeries, borderColor:"#c62828", backgroundColor:"#c62828", borderDash:[6,4], tension:0.2, borderWidth:2, pointRadius:3 },
+/* =============================================================================
+ * 8. CONTROLS SETUP
+ * ============================================================================= */
+function updateModelChoices() {
+  const idx = document.getElementById("param-select").value;
+  const p = PARAMS[idx];
+  const modelSelect = document.getElementById("model-select");
+  modelSelect.innerHTML = "";
+  const models = [
+    ["linear", "Linear Regression"],
+    ["holt", "Holt Exponential Smoothing (trend)"],
+    ["moving", "Moving Average"],
+    ["arima", "ARIMA (auto order)"],
+    ["hybrid", "Hybrid (Linear + ARIMA/SARIMA)"]
   ];
-  if (data.pred_lo && data.pred_lo.length) {
-    const loSeries = Array(data.past_labels.length - 1).fill(null).concat([data.base_value]).concat(data.pred_lo);
-    const hiSeries = Array(data.past_labels.length - 1).fill(null).concat([data.base_value]).concat(data.pred_hi);
-    datasets.push({ label:"Upper (80% CI)", data:hiSeries, borderColor:"rgba(198,40,40,0.25)", backgroundColor:"rgba(198,40,40,0.08)", fill:"+1", pointRadius:0, borderWidth:1 });
-    datasets.push({ label:"Lower (80% CI)", data:loSeries, borderColor:"rgba(198,40,40,0.25)", backgroundColor:"rgba(198,40,40,0.08)", fill:false, pointRadius:0, borderWidth:1 });
-  }
-  if (chart) chart.destroy();
-  chart = new Chart(document.getElementById("forecast-chart"), {
-    type:"line",
-    data:{ labels: allLabels, datasets },
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:"bottom"}, title:{display:true,text:label} } }
+  if (p && p.monthly) models.push(["sarima", "SARIMA (seasonal, period=12)"]);
+  models.forEach(([val, label]) => {
+    const opt = document.createElement("option");
+    opt.value = val; opt.textContent = label;
+    modelSelect.appendChild(opt);
   });
 }
 
-function renderMeta(data) {
-  const row = document.getElementById("meta-row");
-  row.innerHTML = "";
-  const meta = data.meta || {};
-  Object.keys(meta).forEach(k => {
-    const div = document.createElement("div");
-    div.className = "item";
-    div.innerHTML = `${k}: <b>${meta[k]}</b>`;
-    row.appendChild(div);
+function loadParams() {
+  const paramSelect = document.getElementById("param-select");
+  paramSelect.innerHTML = "";
+  PARAMS.forEach((p, i) => {
+    const opt = document.createElement("option");
+    opt.value = i; opt.textContent = p.label + (p.monthly ? "  (monthly)" : "  (annual)");
+    paramSelect.appendChild(opt);
   });
+  paramSelect.addEventListener("change", updateModelChoices);
+  updateModelChoices();
 }
 
 document.getElementById("run-btn").addEventListener("click", runForecast);
-loadParams().then((ok) => { if (ok) runForecast(); });
+loadParams();
+runForecast();
 </script>
 </body>
 </html>
