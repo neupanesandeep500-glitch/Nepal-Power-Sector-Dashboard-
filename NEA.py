@@ -77,14 +77,58 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ── Configuration ────────────────────────────────────────────────────────
 
-DEFAULT_SHEET_URL = os.environ.get(
-    "NEA_SHEET_URL",
-    "https://docs.google.com/spreadsheets/d/1PzTJmKWfBe2_mXFgXZlsOhMcxP85q8C7VnczGxaMM2U/edit?usp=sharing",
+_PLACEHOLDER_SHEET_URL = (
+    "https://docs.google.com/spreadsheets/d/1PzTJmKWfBe2_mXFgXZlsOhMcxP85q8C7VnczGxaMM2U/edit?usp=sharing"
 )
+# Kept for backward compatibility with any code importing NEA.DEFAULT_SHEET_URL
+# directly. This is resolved ONCE at import time from the env var only — use
+# _resolve_sheet_url() everywhere else, since that also picks up a sheet URL
+# saved from the admin panel (see set_sheet_url() below) without needing a
+# process restart.
+DEFAULT_SHEET_URL = os.environ.get("NEA_SHEET_URL", _PLACEHOLDER_SHEET_URL)
+
 CACHE_WORKBOOK_PATH = os.path.join(_HERE, "nea_workbook_cache.xlsx")
 TEMPLATE_PATH = os.path.join(_HERE, "nea_assets", "nea_operational_dashboard_template.html")
 FORECAST_TEMPLATE_PATH = os.path.join(_HERE, "nea_assets", "nea_forecast_lab_template.html")
 AUTO_REFRESH_HOURS = float(os.environ.get("NEA_AUTO_REFRESH_HOURS", "6"))
+
+# Sheet URL entered via the /admin panel is persisted here so it survives a
+# process restart (as long as DATA_DIR/the app directory itself is on
+# persistent storage) without needing NEA_SHEET_URL to be set as an actual
+# platform environment variable. See _resolve_sheet_url()/set_sheet_url().
+_NEA_CONFIG_PATH = os.path.join(os.environ.get("DATA_DIR", _HERE), "nea_config.json")
+
+
+def _load_persisted_sheet_url():
+    try:
+        with open(_NEA_CONFIG_PATH, "r", encoding="utf-8") as f:
+            return (json.load(f).get("sheet_url") or "").strip() or None
+    except Exception:
+        return None
+
+
+def _save_persisted_sheet_url(url):
+    try:
+        os.makedirs(os.path.dirname(_NEA_CONFIG_PATH) or ".", exist_ok=True)
+        with open(_NEA_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump({"sheet_url": url}, f)
+    except Exception:
+        traceback.print_exc()
+
+
+def _resolve_sheet_url():
+    """Precedence: URL saved via the admin panel > NEA_SHEET_URL env var >
+    the placeholder sheet baked into this file (which is NOT the user's
+    data and will fail unless they happen to have access to it)."""
+    return (_load_persisted_sheet_url()
+            or os.environ.get("NEA_SHEET_URL")
+            or _PLACEHOLDER_SHEET_URL)
+
+
+def current_sheet_url() -> str:
+    """The sheet URL that will actually be used on the next sync — for
+    display in the admin panel."""
+    return _resolve_sheet_url()
 
 _MONTHS_BS = ["Shrawan", "Bhadra", "Ashwin", "Kartik", "Mangsir", "Poush",
               "Magh", "Falgun", "Chaitra", "Baishakh", "Jestha", "Ashadh"]
@@ -557,12 +601,16 @@ def build_dashboard_data(parsed: dict) -> dict:
 #    succeeded — e.g. first boot with no network) ───────────────────────
 
 def _load_bundled_fallback() -> dict:
-    """The workbook the user uploaded on 2026-07-29, parsed once and
-    frozen here as `nea_workbook_fallback.xlsx` (bundled in nea_assets/,
-    committed to the repo) so the dashboard renders correctly even on a
-    machine with no outbound internet access at all. This is genuinely
-    parsed at import time (not hand-typed), so it stays exactly in sync
-    with parse_workbook()/build_dashboard_data()."""
+    """If nea_assets/nea_workbook_fallback.xlsx exists (an .xlsx snapshot
+    committed to the repo), parse and return it so the dashboard still
+    renders even on first boot with no network/no successful sync yet.
+    NOTE: as of this commit that file is NOT present in nea_assets/, so
+    this currently returns {} whenever live sync fails before any sync
+    has ever succeeded — that's the actual cause of a fully blank NEA
+    dashboard. Fix: either commit a real nea_workbook_fallback.xlsx here,
+    or get one successful sync/upload in via the admin panel (which then
+    caches to nea_workbook_cache.xlsx and is reused on subsequent
+    failures — see refresh())."""
     fallback_path = os.path.join(_HERE, "nea_assets", "nea_workbook_fallback.xlsx")
     if os.path.exists(fallback_path):
         return build_dashboard_data(parse_workbook(fallback_path))
@@ -635,7 +683,7 @@ def refresh(sheet_url: str = None) -> bool:
     swap it into the live cache atomically. Returns True on success.
     Never raises — failures are recorded in _CACHE['error'] and the
     previous good data (or the bundled fallback) keeps serving."""
-    sheet_url = sheet_url or DEFAULT_SHEET_URL
+    sheet_url = sheet_url or _resolve_sheet_url()
     with _lock:
         try:
             _download_google_sheet_xlsx(sheet_url, CACHE_WORKBOOK_PATH)
@@ -656,27 +704,54 @@ def refresh(sheet_url: str = None) -> bool:
                                   source="Cached workbook (last good sync)")
                 except Exception:
                     traceback.print_exc()
-            # last resort: bundled fallback snapshot
+            # last resort: bundled fallback snapshot (only claim this as the
+            # source if it actually returned something — an empty {} means
+            # nea_assets/nea_workbook_fallback.xlsx isn't present, and we'd
+            # rather leave _CACHE['data'] as None so the real sync error
+            # above is what gets shown, not a misleading "fallback" label)
             if _CACHE["data"] is None:
                 try:
-                    _CACHE["data"] = _load_bundled_fallback()
-                    _CACHE["source"] = "Bundled fallback snapshot"
+                    fallback_data = _load_bundled_fallback()
+                    if fallback_data:
+                        _CACHE["data"] = fallback_data
+                        _CACHE["source"] = "Bundled fallback snapshot"
                 except Exception:
                     traceback.print_exc()
             return False
+
+
+def set_sheet_url(url: str) -> bool:
+    """Called from the admin panel's 'NEA Data Sync' card. Persists the URL
+    (so it's still used after a restart) and immediately attempts a sync
+    with it. Raises ValueError if url is blank; sync failures are NOT
+    raised — check sync_status()['error'] afterwards, same as refresh()."""
+    url = (url or "").strip()
+    if not url:
+        raise ValueError("Please provide a Google Sheet URL or ID for the NEA data")
+    _save_persisted_sheet_url(url)
+    return refresh(url)
 
 
 def bootstrap():
     """Call once at app startup. Non-blocking-ish: does one synchronous
     attempt (so the very first page load already has real data if the
     network is up), then hands off to the background timer."""
-    configured_url = os.environ.get("NEA_SHEET_URL")
-    if configured_url:
-        print(f"[NEA DEBUG] NEA_SHEET_URL is set ({configured_url[:60]}...) — attempting sync.")
+    persisted_url = _load_persisted_sheet_url()
+    env_url = os.environ.get("NEA_SHEET_URL")
+    if persisted_url:
+        print(f"[NEA DEBUG] Using sheet URL saved via /admin ({persisted_url[:60]}...) — attempting sync.")
+    elif env_url:
+        print(f"[NEA DEBUG] NEA_SHEET_URL is set ({env_url[:60]}...) — attempting sync.")
     else:
-        print("[NEA DEBUG] NEA_SHEET_URL is NOT set — falling back to the placeholder "
-              "DEFAULT_SHEET_URL baked into NEA.py, which will almost certainly fail "
-              "unless that placeholder sheet happens to be shared with you.")
+        print("[NEA DEBUG] No NEA sheet configured — NEA_SHEET_URL is not set and nothing has "
+              "been saved via the admin panel. Falling back to the placeholder sheet baked "
+              "into NEA.py, which will almost certainly fail unless that placeholder sheet "
+              "happens to be shared with you. Set NEA_SHEET_URL, or paste your sheet's URL "
+              "into the 'NEA Data Sync' card on /admin.")
+    if not os.path.exists(os.path.join(_HERE, "nea_assets", "nea_workbook_fallback.xlsx")):
+        print("[NEA DEBUG] Note: nea_assets/nea_workbook_fallback.xlsx is not present in this "
+              "deployment, so if the live sync fails and no workbook has been cached/uploaded "
+              "yet, the NEA dashboard will have no data to show at all until a sync succeeds.")
 
     def _bootstrap_and_report():
         ok = refresh()
