@@ -110,7 +110,12 @@
 
 <script>
 const DATA = __NEA_DATA_JSON__;
-const PALETTE = ["#1565c0","#2e7d32","#f9a825","#c62828","#6a1b9a","#00838f","#ef6c00","#455a64","#ad1457","#4527a0"];
+// Distinct, well-separated hues for stacked-bar segments (no shared-hue/opacity variants).
+const PALETTE = ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
+// Reserved exclusively for the two peak-demand lines — deliberately outside PALETTE so a line
+// is never confused with a stacked-bar segment. Distinguished further by line style (dash vs solid).
+const PEAK_SYSTEM_COLOR = "#212121";   // System Peak — dashed
+const PEAK_NATIONAL_COLOR = "#d500f9"; // National Peak (Peak Demand) — solid
 
 function fmt(n) {
   if (n === null || n === undefined || isNaN(n)) return "—";
@@ -164,10 +169,12 @@ function renderAnnualEnergy() {
   const d = DATA.annualEnergy || {};
   new Chart(document.getElementById("chart-annual-energy"), {
     data: { labels: d.years || [], datasets: [
-      { type:"line", label:"System Peak (MW)", data:d.system_peak, borderColor:"#000000",
-        backgroundColor:"#000000", yAxisID:"y1", tension:0.25, borderWidth:3, pointRadius:2, order:0 },
-      { type:"line", label:"National Peak (MW)", data:d.national_peak, borderColor:"#ffab00",
-        backgroundColor:"#ffab00", yAxisID:"y1", tension:0.25, borderWidth:3, pointRadius:2, order:0 },
+      { type:"line", label:"System Peak (MW)", data:d.system_peak, borderColor:PEAK_SYSTEM_COLOR,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], yAxisID:"y1", tension:0.25, borderWidth:3,
+        pointRadius:2, pointStyle:"rectRot", order:0 },
+      { type:"line", label:"National Peak (MW)", data:d.national_peak, borderColor:PEAK_NATIONAL_COLOR,
+        backgroundColor:PEAK_NATIONAL_COLOR, yAxisID:"y1", tension:0.25, borderWidth:3,
+        pointRadius:2, pointStyle:"circle", order:0 },
       { type:"bar", label:"NEA Own", data:d.nea_own, backgroundColor:PALETTE[0], stack:"gen", order:1 },
       { type:"bar", label:"NEA Subsidiary", data:d.nea_sub, backgroundColor:PALETTE[1], stack:"gen", order:1 },
       { type:"bar", label:"IPP", data:d.ipp, backgroundColor:PALETTE[2], stack:"gen", order:1 },
@@ -299,12 +306,16 @@ function renderCapacityBalance(fy) {
   const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
   const cfg = {
     data: { labels: entry.months, datasets: [
-      // Lines first, distinct colors, own un-stacked axis — same true
-      // MW value whether shown here or on the Annual Energy chart.
-      { type:"line", label:"System Peak", data:entry.system_peak, borderColor:"#000000",
-        backgroundColor:"#000000", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
-      { type:"line", label:"National Peak", data:entry.national_peak, borderColor:"#ffab00",
-        backgroundColor:"#ffab00", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+      // Lines first, reserved colors (never reused by a stacked-bar segment), own
+      // un-stacked axis — same true MW value and same scale whether shown here or
+      // on the Annual Energy chart. Dashed vs solid gives a second, redundant cue
+      // so the two peaks stay distinguishable even in greyscale/print.
+      { type:"line", label:"System Peak", data:entry.system_peak, borderColor:PEAK_SYSTEM_COLOR,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], yAxisID:"y1", borderWidth:3,
+        tension:0.2, pointRadius:2, pointStyle:"rectRot", order:0 },
+      { type:"line", label:"National Peak", data:entry.national_peak, borderColor:PEAK_NATIONAL_COLOR,
+        backgroundColor:PEAK_NATIONAL_COLOR, yAxisID:"y1", borderWidth:3,
+        tension:0.2, pointRadius:2, pointStyle:"circle", order:0 },
       { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
       { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
       { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
