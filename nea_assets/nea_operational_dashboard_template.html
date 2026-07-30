@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>NEA Operational Data</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="/nea-vendor/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
   :root { --nea-blue:#0d47a1; --nea-blue2:#1565c0; --nea-bg:#f4f7fb; --nea-card:#ffffff; }
@@ -312,15 +312,27 @@ function renderMonthlySingle(canvasId, fy, dataMap, months, existingChart) {
   return new Chart(document.getElementById(canvasId), cfg);
 }
 
+function safe(label, fn) {
+  try { fn(); } catch (e) {
+    console.error("NEA chart failed: " + label, e);
+  }
+}
+
 function init() {
-  renderKpis();
-  renderSystemLoss();
-  renderAnnualEnergy();
-  renderConsumers();
-  renderSales();
-  renderFinancial();
-  renderTransmission();
-  renderSubstation();
+  if (typeof Chart === "undefined") {
+    document.getElementById("nea-content").insertAdjacentHTML("afterbegin",
+      '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> The charting library did not load, ' +
+      'so charts below cannot render (KPI numbers above are unaffected). Try reloading the page; if this ' +
+      'keeps happening, check that /nea-vendor/chart.umd.min.js is reachable.</div>');
+  }
+  safe("kpis", renderKpis);
+  safe("systemLoss", renderSystemLoss);
+  safe("annualEnergy", renderAnnualEnergy);
+  safe("consumers", renderConsumers);
+  safe("sales", renderSales);
+  safe("financial", renderFinancial);
+  safe("transmission", renderTransmission);
+  safe("substation", renderSubstation);
 
   const months = DATA.exportMonths || [];
   const ebKeys = Object.keys(DATA.energyBalanceMonthly || {});
@@ -329,24 +341,32 @@ function init() {
   const expKeys = Object.keys(DATA.exportData || {});
 
   if (ebKeys.length) {
-    populateFySelect(document.getElementById("eb-fy-select"), ebKeys, renderEnergyBalance);
-    renderEnergyBalance(ebKeys[ebKeys.length - 1]);
+    safe("energyBalance", () => {
+      populateFySelect(document.getElementById("eb-fy-select"), ebKeys, renderEnergyBalance);
+      renderEnergyBalance(ebKeys[ebKeys.length - 1]);
+    });
   }
   if (cbKeys.length) {
-    populateFySelect(document.getElementById("cb-fy-select"), cbKeys, renderCapacityBalance);
-    renderCapacityBalance(cbKeys[cbKeys.length - 1]);
+    safe("capacityBalance", () => {
+      populateFySelect(document.getElementById("cb-fy-select"), cbKeys, renderCapacityBalance);
+      renderCapacityBalance(cbKeys[cbKeys.length - 1]);
+    });
   }
   if (impKeys.length) {
-    populateFySelect(document.getElementById("imp-fy-select"), impKeys, (fy) => {
-      impChart = renderMonthlySingle("chart-import", fy, DATA.importData, months, impChart);
+    safe("import", () => {
+      populateFySelect(document.getElementById("imp-fy-select"), impKeys, (fy) => {
+        impChart = renderMonthlySingle("chart-import", fy, DATA.importData, months, impChart);
+      });
+      impChart = renderMonthlySingle("chart-import", impKeys[impKeys.length - 1], DATA.importData, months, null);
     });
-    impChart = renderMonthlySingle("chart-import", impKeys[impKeys.length - 1], DATA.importData, months, null);
   }
   if (expKeys.length) {
-    populateFySelect(document.getElementById("exp-fy-select"), expKeys, (fy) => {
-      expChart = renderMonthlySingle("chart-export", fy, DATA.exportData, months, expChart);
+    safe("export", () => {
+      populateFySelect(document.getElementById("exp-fy-select"), expKeys, (fy) => {
+        expChart = renderMonthlySingle("chart-export", fy, DATA.exportData, months, expChart);
+      });
+      expChart = renderMonthlySingle("chart-export", expKeys[expKeys.length - 1], DATA.exportData, months, null);
     });
-    expChart = renderMonthlySingle("chart-export", expKeys[expKeys.length - 1], DATA.exportData, months, null);
   }
 }
 
