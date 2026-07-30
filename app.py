@@ -343,6 +343,19 @@ NEA.start_background_refresh()
 STATE = ss.STATE
 
 
+@server.route("/nea-vendor/<path:filename>")
+def serve_nea_vendor(filename):
+    # Chart.js is bundled locally here (nea_assets/vendor/) instead of being
+    # pulled from a CDN, because a blocked/slow/ad-blocked cdnjs request was
+    # the actual cause of "Chart is not defined" errors on the NEA charts
+    # and Forecast Lab — the KPI cards (plain DOM writes) still rendered
+    # fine, but every canvas that needed `new Chart(...)` threw, since the
+    # library itself never loaded in the browser.
+    from flask import send_from_directory
+    vendor_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nea_assets", "vendor")
+    return send_from_directory(vendor_dir, filename)
+
+
 @server.route("/nea-operational-dashboard")
 def nea_operational_dashboard():
     try:
