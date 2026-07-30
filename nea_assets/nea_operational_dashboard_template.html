@@ -110,12 +110,20 @@
 
 <script>
 const DATA = __NEA_DATA_JSON__;
-// Distinct, well-separated hues for stacked-bar segments (no shared-hue/opacity variants).
 const PALETTE = ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
-// Reserved exclusively for the two peak-demand lines — deliberately outside PALETTE so a line
-// is never confused with a stacked-bar segment. Distinguished further by line style (dash vs solid).
-const PEAK_SYSTEM_COLOR = "#212121";   // System Peak — dashed
-const PEAK_NATIONAL_COLOR = "#d500f9"; // National Peak (Peak Demand) — solid
+const PEAK_SYSTEM_COLOR = "#212121";
+const PEAK_NATIONAL_COLOR = "#d500f9";
+
+function niceMax(arr, pad=1.25) {
+  const vals = (arr || []).filter(v => v !== null && v !== undefined && !isNaN(v));
+  if (!vals.length) return undefined;
+  const m = Math.max(...vals) * pad;
+  if (m <= 0) return undefined;
+  const pow10 = Math.pow(10, Math.floor(Math.log10(m)));
+  const n = m / pow10;
+  const ceil = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return ceil * pow10;
+}
 
 function fmt(n) {
   if (n === null || n === undefined || isNaN(n)) return "—";
@@ -191,11 +199,11 @@ function renderConsumers() {
   const d = DATA.consumers || {};
   new Chart(document.getElementById("chart-consumers"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"Total Consumers", data:d.total, backgroundColor:PALETTE[0] },
-      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2 },
+      { type:"bar", label:"Total Consumers", data:d.total, backgroundColor:PALETTE[0], order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, order:0 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}} },
+      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}, beginAtZero:true, max:niceMax(d.growth_pct,1.2)} },
       plugins:{legend:{position:"bottom"}} }
   });
 }
@@ -204,11 +212,11 @@ function renderSales() {
   const d = DATA.sales || {};
   new Chart(document.getElementById("chart-sales"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"Total Gross Revenue (Rs. Mn)", data:d.total, backgroundColor:PALETTE[1] },
-      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2 },
+      { type:"bar", label:"Total Gross Revenue (Rs. Mn)", data:d.total, backgroundColor:PALETTE[1], order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, order:0 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}} },
+      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}, beginAtZero:true, max:niceMax(d.growth_pct,1.2)} },
       plugins:{legend:{position:"bottom"}} }
   });
 }
@@ -245,11 +253,11 @@ function renderSubstation() {
   const d = DATA.substation || {};
   new Chart(document.getElementById("chart-substation"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"Capacity (MVA)", data:d.capacity, backgroundColor:PALETTE[5] },
-      { type:"line", label:"Increment", data:d.increment, yAxisID:"y1", borderColor:PALETTE[6], tension:0.25, borderWidth:2 },
+      { type:"bar", label:"Capacity (MVA)", data:d.capacity, backgroundColor:PALETTE[5], order:1 },
+      { type:"line", label:"Increment", data:d.increment, yAxisID:"y1", borderColor:PALETTE[6], tension:0.25, borderWidth:2, order:0 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales:{ y1:{position:"right", grid:{drawOnChartArea:false}} },
+      scales:{ y1:{position:"right", grid:{drawOnChartArea:false}, beginAtZero:true, max:niceMax(d.increment,1.2)} },
       plugins:{legend:{position:"bottom"}} }
   });
 }
@@ -273,11 +281,8 @@ function renderEnergyBalance(fy) {
   const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
   const cfg = {
     data: { labels: entry.months, datasets: [
-      // Line first (drawn/listed ahead of the stacked bars), distinct
-      // color, own un-stacked axis so its true value is never squashed
-      // by the stacked bar total's much larger range.
       { type:"line", label:"System Demand", data:entry.system_demand, borderColor:"#e91e63",
-        backgroundColor:"#e91e63", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+        backgroundColor:"#e91e63", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
       { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
       { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
       { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
@@ -285,15 +290,11 @@ function renderEnergyBalance(fy) {
       { type:"bar", label:"NEA Solar", data:entry.nea_solar, backgroundColor:PALETTE[6], stack:"s", order:1 },
       { type:"bar", label:"Thermal", data:entry.thermal, backgroundColor:PALETTE[7], stack:"s", order:1 },
       { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
-      // Export shares the same stack as Import etc. but as negative
-      // values, so it renders below the zero line instead of piling on
-      // top — import (positive) vs. export (negative) on one shared axis.
       { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
       scales:{ x:{stacked:true},
-               y:{stacked:true, title:{display:true,text:"GWh (Import +, Export −)"}},
-               y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"GWh (System Demand)"}} },
+               y:{stacked:true, title:{display:true,text:"GWh"}} },
       plugins:{legend:{position:"bottom"}} }
   };
   if (ebChart) ebChart.destroy();
@@ -306,30 +307,22 @@ function renderCapacityBalance(fy) {
   const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
   const cfg = {
     data: { labels: entry.months, datasets: [
-      // Lines first, reserved colors (never reused by a stacked-bar segment), own
-      // un-stacked axis — same true MW value and same scale whether shown here or
-      // on the Annual Energy chart. Dashed vs solid gives a second, redundant cue
-      // so the two peaks stay distinguishable even in greyscale/print.
       { type:"line", label:"System Peak", data:entry.system_peak, borderColor:PEAK_SYSTEM_COLOR,
-        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], yAxisID:"y1", borderWidth:3,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], borderWidth:3,
         tension:0.2, pointRadius:2, pointStyle:"rectRot", order:0 },
       { type:"line", label:"National Peak", data:entry.national_peak, borderColor:PEAK_NATIONAL_COLOR,
-        backgroundColor:PEAK_NATIONAL_COLOR, yAxisID:"y1", borderWidth:3,
+        backgroundColor:PEAK_NATIONAL_COLOR, borderWidth:3,
         tension:0.2, pointRadius:2, pointStyle:"circle", order:0 },
       { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
       { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
       { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
       { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s", order:1 },
       { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
-      // Export shares the same stack as Import etc. but as negative
-      // values, so it renders below the zero line — import (positive)
-      // vs. export (negative) on one shared axis.
       { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
       scales:{ x:{stacked:true},
-               y:{stacked:true, title:{display:true,text:"MW (Import +, Export −)"}},
-               y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"MW (Peak Demand)"}} },
+               y:{stacked:true, title:{display:true,text:"MW"}} },
       plugins:{legend:{position:"bottom"}} }
   };
   if (cbChart) cbChart.destroy();
@@ -409,7 +402,7 @@ if (!DATA || Object.keys(DATA).length === 0) {
   document.getElementById("nea-content").innerHTML =
     '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is loaded yet. ' +
     'See the status badge above for the specific sync error. An administrator needs to fix that ' +
-    '(usually the sheet\'s sharing setting, the NEA_SHEET_URL value, or a tab name mismatch) and wait ' +
+    "(usually the sheet's sharing setting, the NEA_SHEET_URL value, or a tab name mismatch) and wait " +
     'for the next background sync, or restart the app.</div>';
 } else {
   init();
