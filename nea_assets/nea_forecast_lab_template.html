@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>NEA Forecast Lab</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="/nea-vendor/chart.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 <style>
   * { box-sizing:border-box; }
@@ -113,6 +113,12 @@ async function runForecast() {
   const nAhead = parseInt(document.getElementById("n-ahead").value || "5", 10);
   const errBox = document.getElementById("error-box");
   const loading = document.getElementById("loading-msg");
+  if (typeof Chart === "undefined") {
+    errBox.textContent = "The charting library did not load, so the forecast can't be drawn. " +
+      "Try reloading the page; if this keeps happening, check that /nea-vendor/chart.umd.min.js is reachable.";
+    errBox.style.display = "block";
+    return;
+  }
   errBox.style.display = "none";
   loading.style.display = "block";
   document.getElementById("run-btn").disabled = true;

@@ -195,6 +195,15 @@ power-plant/transmission-line dataset.
 <input type="file" name="nea_workbook" accept=".xlsx,.xls">
 <button type="submit">Upload NEA Workbook</button>
 </form>
+{% if nea_has_override %}
+<p style="color:#666; font-size:12px; margin-top:10px;">
+A URL saved here is currently in use and will keep overriding the <code>NEA_SHEET_URL</code>
+environment variable, even if you change it on Render, until you clear it below.
+</p>
+<form method="post" action="{{ url_for('admin.clear_nea_sheet_override') }}" style="margin-top:4px;">
+<button type="submit">Clear saved URL (use NEA_SHEET_URL env var instead)</button>
+</form>
+{% endif %}
 </div>
 
 <div class="card">
@@ -407,6 +416,7 @@ def index():
         default_pa_url=default_pa,
         nea_status=nea_status,
         default_nea_sheet_url=NEA.current_sheet_url(),
+        nea_has_override=NEA.has_persisted_sheet_url(),
         marquee_enabled=ss.get_marquee_enabled(),
         cache_bust=int(time.time()),
         has_logo=bool(ss.get_logo_path()),
@@ -479,6 +489,23 @@ def sync_nea_sheet():
             flash("NEA data sheet synced successfully!", "success")
     except Exception as e:
         flash(f"NEA sync failed: {str(e)}", "error")
+    return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/clear-nea-sheet-override", methods=["POST"])
+@admin_required
+def clear_nea_sheet_override():
+    """Remove the admin-saved NEA sheet URL so NEA_SHEET_URL (the Render
+    environment variable) is used again on the next sync."""
+    try:
+        NEA.clear_persisted_sheet_url()
+        status = NEA.sync_status()
+        if status["error"]:
+            flash(f"Cleared saved URL, but re-sync against the env var failed: {status['error']}", "error")
+        else:
+            flash("Cleared saved URL — now using NEA_SHEET_URL (or the default) again.", "success")
+    except Exception as e:
+        flash(f"Failed to clear saved NEA sheet URL: {str(e)}", "error")
     return redirect(url_for("admin.index"))
 
 
