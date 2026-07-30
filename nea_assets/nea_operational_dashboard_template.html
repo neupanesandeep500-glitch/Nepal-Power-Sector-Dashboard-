@@ -164,16 +164,18 @@ function renderAnnualEnergy() {
   const d = DATA.annualEnergy || {};
   new Chart(document.getElementById("chart-annual-energy"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"NEA Own", data:d.nea_own, backgroundColor:PALETTE[0], stack:"gen" },
-      { type:"bar", label:"NEA Subsidiary", data:d.nea_sub, backgroundColor:PALETTE[1], stack:"gen" },
-      { type:"bar", label:"IPP", data:d.ipp, backgroundColor:PALETTE[2], stack:"gen" },
-      { type:"bar", label:"India Import", data:d.india, backgroundColor:PALETTE[3], stack:"gen" },
-      { type:"line", label:"National Peak (MW)", data:d.national_peak, borderColor:PALETTE[4], yAxisID:"y1", tension:0.25, borderWidth:2 },
-      { type:"line", label:"System Peak (MW)", data:d.system_peak, borderColor:PALETTE[6], yAxisID:"y1", tension:0.25, borderWidth:2 },
+      { type:"line", label:"System Peak (MW)", data:d.system_peak, borderColor:"#000000",
+        backgroundColor:"#000000", yAxisID:"y1", tension:0.25, borderWidth:3, pointRadius:2, order:0 },
+      { type:"line", label:"National Peak (MW)", data:d.national_peak, borderColor:"#ffab00",
+        backgroundColor:"#ffab00", yAxisID:"y1", tension:0.25, borderWidth:3, pointRadius:2, order:0 },
+      { type:"bar", label:"NEA Own", data:d.nea_own, backgroundColor:PALETTE[0], stack:"gen", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:d.nea_sub, backgroundColor:PALETTE[1], stack:"gen", order:1 },
+      { type:"bar", label:"IPP", data:d.ipp, backgroundColor:PALETTE[2], stack:"gen", order:1 },
+      { type:"bar", label:"India Import", data:d.india, backgroundColor:PALETTE[3], stack:"gen", order:1 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
       scales: { y:{stacked:true, title:{display:true,text:"MU"}},
-                y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"MW"}} },
+                y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"MW (Peak Demand)"}} },
       plugins:{legend:{position:"bottom"}} }
   });
 }
@@ -261,19 +263,30 @@ function populateFySelect(selectEl, fyKeys, onChange) {
 function renderEnergyBalance(fy) {
   const entry = (DATA.energyBalanceMonthly || {})[fy];
   if (!entry) return;
+  const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
   const cfg = {
     data: { labels: entry.months, datasets: [
-      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s" },
-      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s" },
-      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s" },
-      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s" },
-      { type:"bar", label:"NEA Solar", data:entry.nea_solar, backgroundColor:PALETTE[6], stack:"s" },
-      { type:"bar", label:"Thermal", data:entry.thermal, backgroundColor:PALETTE[7], stack:"s" },
-      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s" },
-      { type:"line", label:"System Demand", data:entry.system_demand, borderColor:"#000", borderWidth:2, tension:0.2 },
+      // Line first (drawn/listed ahead of the stacked bars), distinct
+      // color, own un-stacked axis so its true value is never squashed
+      // by the stacked bar total's much larger range.
+      { type:"line", label:"System Demand", data:entry.system_demand, borderColor:"#e91e63",
+        backgroundColor:"#e91e63", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
+      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
+      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s", order:1 },
+      { type:"bar", label:"NEA Solar", data:entry.nea_solar, backgroundColor:PALETTE[6], stack:"s", order:1 },
+      { type:"bar", label:"Thermal", data:entry.thermal, backgroundColor:PALETTE[7], stack:"s", order:1 },
+      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
+      // Export shares the same stack as Import etc. but as negative
+      // values, so it renders below the zero line instead of piling on
+      // top — import (positive) vs. export (negative) on one shared axis.
+      { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales:{ x:{stacked:true}, y:{stacked:true, title:{display:true,text:"GWh"}} },
+      scales:{ x:{stacked:true},
+               y:{stacked:true, title:{display:true,text:"GWh (Import +, Export −)"}},
+               y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"GWh (System Demand)"}} },
       plugins:{legend:{position:"bottom"}} }
   };
   if (ebChart) ebChart.destroy();
@@ -283,18 +296,29 @@ function renderEnergyBalance(fy) {
 function renderCapacityBalance(fy) {
   const entry = (DATA.capacityBalanceMonthly || {})[fy];
   if (!entry) return;
+  const negExport = (entry.export || []).map(v => (v === null || v === undefined) ? null : -v);
   const cfg = {
     data: { labels: entry.months, datasets: [
-      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s" },
-      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s" },
-      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s" },
-      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s" },
-      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s" },
-      { type:"line", label:"System Peak", data:entry.system_peak, borderColor:"#000", borderWidth:2, tension:0.2 },
-      { type:"line", label:"National Peak", data:entry.national_peak, borderColor:PALETTE[5], borderWidth:2, tension:0.2 },
+      // Lines first, distinct colors, own un-stacked axis — same true
+      // MW value whether shown here or on the Annual Energy chart.
+      { type:"line", label:"System Peak", data:entry.system_peak, borderColor:"#000000",
+        backgroundColor:"#000000", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+      { type:"line", label:"National Peak", data:entry.national_peak, borderColor:"#ffab00",
+        backgroundColor:"#ffab00", yAxisID:"y1", borderWidth:3, tension:0.2, pointRadius:2, order:0 },
+      { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
+      { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
+      { type:"bar", label:"NEA ROR/PROR", data:entry.nea_ror, backgroundColor:PALETTE[2], stack:"s", order:1 },
+      { type:"bar", label:"NEA Storage", data:entry.nea_storage, backgroundColor:PALETTE[4], stack:"s", order:1 },
+      { type:"bar", label:"Import", data:entry.import, backgroundColor:PALETTE[3], stack:"s", order:1 },
+      // Export shares the same stack as Import etc. but as negative
+      // values, so it renders below the zero line — import (positive)
+      // vs. export (negative) on one shared axis.
+      { type:"bar", label:"Export", data:negExport, backgroundColor:PALETTE[5], stack:"s", order:1 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales:{ x:{stacked:true}, y:{stacked:true, title:{display:true,text:"MW"}} },
+      scales:{ x:{stacked:true},
+               y:{stacked:true, title:{display:true,text:"MW (Import +, Export −)"}},
+               y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"MW (Peak Demand)"}} },
       plugins:{legend:{position:"bottom"}} }
   };
   if (cbChart) cbChart.destroy();
