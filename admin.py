@@ -19,6 +19,7 @@ from flask import Blueprint, render_template_string, request, redirect, url_for,
 
 import server_state as ss
 import data_engine as de
+import NEA
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -170,6 +171,29 @@ select { width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ddd; bord
 <form method="post" action="{{ url_for('admin.upload_workbook') }}" enctype="multipart/form-data">
 <input type="file" name="workbook" accept=".xlsx,.xls,.csv">
 <button type="submit">Upload & Load</button>
+</form>
+</div>
+
+<div class="card">
+<h3>🏭 NEA Operational Data Sync</h3>
+<p style="color:#666; font-size:13px; margin-top:-6px;">
+This is a SEPARATE data source from the "Google Sheet Sync" card above — it only
+feeds the NEA Operational Dashboard / Forecast Lab tabs (system loss, financials,
+annual energy &amp; peak, consumers, transmission, substations, etc.), not the
+power-plant/transmission-line dataset.
+</p>
+<div class="status-box {% if nea_status.error %}error{% elif not nea_status.last_sync %}warning{% endif %}" style="margin-bottom:12px;">
+<strong>NEA Data Status:</strong> {{ nea_status.source or "No sync yet" }}<br>
+{% if nea_status.last_sync %}<strong>Last Sync:</strong> {{ nea_status.last_sync }}<br>{% endif %}
+{% if nea_status.error %}<strong>Error:</strong> {{ nea_status.error }}{% endif %}
+</div>
+<form method="post" action="{{ url_for('admin.sync_nea_sheet') }}">
+<input type="text" name="nea_sheet_url" placeholder="NEA Google Sheet URL or ID" value="{{ default_nea_sheet_url }}">
+<button type="submit">Sync NEA Sheet</button>
+</form>
+<form method="post" action="{{ url_for('admin.upload_nea_workbook') }}" enctype="multipart/form-data" style="margin-top:10px;">
+<input type="file" name="nea_workbook" accept=".xlsx,.xls">
+<button type="submit">Upload NEA Workbook</button>
 </form>
 </div>
 
@@ -374,12 +398,15 @@ def index():
     default_gis = os.environ.get("DEFAULT_GIS_DRIVE_URL", "")
     default_pa = os.environ.get("DEFAULT_PA_DRIVE_URL", "")
     status_names = de.STATUS_ORDER + de.EXTRA_STATUS_ORDER
+    nea_status = NEA.sync_status()
     return render_template_string(
         ADMIN_TEMPLATE,
         state=ss.STATE,
         default_sheet_url=default_sheet,
         default_gis_url=default_gis,
         default_pa_url=default_pa,
+        nea_status=nea_status,
+        default_nea_sheet_url=NEA.current_sheet_url(),
         marquee_enabled=ss.get_marquee_enabled(),
         cache_bust=int(time.time()),
         has_logo=bool(ss.get_logo_path()),
@@ -429,6 +456,50 @@ def upload_workbook():
         flash(f"Workbook '{filename}' loaded successfully!", "success")
     except Exception as e:
         flash(f"Failed to load workbook: {str(e)}", "error")
+
+    return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/sync-nea-sheet", methods=["POST"])
+@admin_required
+def sync_nea_sheet():
+    """Sync the SEPARATE 'NEA Operational Data' tabs (system loss,
+    financials, annual energy/peak, etc.) — distinct from the main
+    power-plant/transmission-line sheet synced above."""
+    url = request.form.get("nea_sheet_url", "").strip()
+    if not url:
+        flash("Please provide a Google Sheet URL or ID for the NEA data", "error")
+        return redirect(url_for("admin.index"))
+    try:
+        NEA.set_sheet_url(url)
+        status = NEA.sync_status()
+        if status["error"]:
+            flash(f"NEA sheet sync failed: {status['error']}", "error")
+        else:
+            flash("NEA data sheet synced successfully!", "success")
+    except Exception as e:
+        flash(f"NEA sync failed: {str(e)}", "error")
+    return redirect(url_for("admin.index"))
+
+
+@admin_bp.route("/upload-nea-workbook", methods=["POST"])
+@admin_required
+def upload_nea_workbook():
+    """Manually upload the NEA workbook (.xlsx) as an alternative to
+    Google Sheet sync — bypasses Google entirely."""
+    if "nea_workbook" not in request.files or request.files["nea_workbook"].filename == "":
+        flash("No file selected for NEA workbook", "error")
+        return redirect(url_for("admin.index"))
+    file = request.files["nea_workbook"]
+    filename = file.filename
+    os.makedirs(ss.DATA_DIR, exist_ok=True)
+    saved_path = os.path.join(ss.DATA_DIR, "nea_upload_" + filename)
+    file.save(saved_path)
+
+    if NEA.load_from_path(saved_path):
+        flash(f"NEA workbook '{filename}' loaded successfully!", "success")
+    else:
+        flash(f"Failed to load NEA workbook: {NEA.sync_status()['error']}", "error")
 
     return redirect(url_for("admin.index"))
 
