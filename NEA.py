@@ -732,6 +732,26 @@ def set_sheet_url(url: str) -> bool:
     return refresh(url)
 
 
+def has_persisted_sheet_url() -> bool:
+    """True if a sheet URL was saved via the admin panel. While this is
+    true, _resolve_sheet_url() uses it and ignores NEA_SHEET_URL — this is
+    why changing the Render env var alone can look like it "does nothing"
+    once the admin panel has been used once."""
+    return _load_persisted_sheet_url() is not None
+
+
+def clear_persisted_sheet_url() -> bool:
+    """Remove the admin-saved override so _resolve_sheet_url() falls back
+    to the NEA_SHEET_URL environment variable (or the placeholder) again,
+    and re-syncs immediately against whichever of those is now in effect."""
+    try:
+        if os.path.exists(_NEA_CONFIG_PATH):
+            os.remove(_NEA_CONFIG_PATH)
+    except Exception:
+        traceback.print_exc()
+    return refresh(_resolve_sheet_url())
+
+
 def bootstrap():
     """Call once at app startup. Non-blocking-ish: does one synchronous
     attempt (so the very first page load already has real data if the
