@@ -39,10 +39,7 @@
 </head>
 <body>
 <div class="nea-wrap">
-  <div class="nea-badge" id="nea-badge">__NEA_SYNC_BADGE__</div>
-
   <div id="nea-content">
-  <div class="nea-kpi-grid" id="nea-kpi-grid"></div>
 
   <div class="nea-subtabs-nav" id="nea-category-tabs" role="tablist">
     <button type="button" class="nea-subtab-btn active" data-cat="technical">🔧 Technical Performance</button>
@@ -126,7 +123,6 @@
   </div>
   <!-- /financial -->
 
-  <div class="nea-footnote">Source: NEA Operational Data workbook (live-synced from Google Sheet). Data shown reflects the most recent successful sync.</div>
   </div>
 </div>
 
@@ -159,20 +155,6 @@ function kpiCard(label, value, delta, deltaGood) {
     `<div class="delta ${deltaGood ? 'up' : 'down'}">${delta}</div>`;
   div.innerHTML = `<div class="label">${label}</div><div class="value">${value}</div>${deltaHtml}`;
   return div;
-}
-
-function renderKpis() {
-  const k = DATA.kpi || {};
-  const grid = document.getElementById("nea-kpi-grid");
-  const rows = [
-    ["Total Consumers", fmt(k.total_consumers), `${k.consumer_increase >= 0 ? "+" : ""}${fmt(k.consumer_increase)} (${fmt(k.consumer_increase_pct)}%)`, k.consumer_increase >= 0],
-    ["Latest Revenue (Rs. Mn)", fmt(k.latest_revenue), `${fmt(k.revenue_growth)}% YoY`, k.revenue_growth >= 0],
-    ["Latest Profit/Loss (Rs. Mn)", fmt(k.latest_profit), `${k.profit_change >= 0 ? "+" : ""}${fmt(k.profit_change)} (${fmt(k.profit_change_pct)}%)`, k.profit_change >= 0],
-    ["System Loss (%)", fmt(k.latest_system_loss), `${k.loss_reduction >= 0 ? "-" : "+"}${fmt(Math.abs(k.loss_reduction))} pts YoY`, k.loss_reduction >= 0],
-    ["Total Availability (MU)", fmt(k.latest_total_avail), `${fmt(k.avail_growth)}% YoY`, k.avail_growth >= 0],
-    ["National Peak (MW)", fmt(k.latest_peak), `${fmt(k.peak_growth)}% YoY`, k.peak_growth >= 0],
-  ];
-  rows.forEach(r => grid.appendChild(kpiCard(r[0], r[1], r[2], r[3])));
 }
 
 function lineDataset(label, data, color, fill=false) {
@@ -427,7 +409,6 @@ function init() {
       'so charts below cannot render (KPI numbers above are unaffected). Try reloading the page; if this ' +
       'keeps happening, check that /nea-vendor/chart.umd.min.js is reachable.</div>');
   }
-  safe("kpis", renderKpis);
   safe("systemLoss", renderSystemLoss);
   safe("annualEnergy", renderAnnualEnergy);
   safe("consumers", renderConsumers);
