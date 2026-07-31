@@ -103,8 +103,8 @@
   </div>
 
   <div class="nea-section">
-    <h3><i class="fas fa-hand-holding-dollar"></i> Revenue Collection per Consumer</h3>
-    <div class="nea-chart-box"><canvas id="chart-revenue-per-consumer"></canvas></div>
+    <h3><i class="fas fa-hand-holding-dollar"></i> Revenue Collection by Consumer Category</h3>
+    <div class="nea-chart-box"><canvas id="chart-revenue-by-category"></canvas></div>
   </div>
 
   <div class="nea-grid-2">
@@ -255,17 +255,23 @@ function renderSales() {
   });
 }
 
-function renderRevenuePerConsumer() {
-  const d = DATA.revenuePerConsumer || {};
-  new Chart(document.getElementById("chart-revenue-per-consumer"), {
-    type: "bar",
-    data: { labels: d.years || [], datasets: [
-      { label:"Revenue Collection per Consumer (Rs.)", data:d.value, backgroundColor:PALETTE[2] },
-    ]},
+function renderRevenueByCategory() {
+  const d = DATA.sales || {};
+  const cats = d.categories || {};
+  const keys = Object.keys(cats);
+  if (!keys.length) return; // sheet has no extra category columns beyond Total/Growth
+  const datasets = keys.map((k, i) => ({
+    type: "bar", label: k, data: cats[k], backgroundColor: PALETTE[i % PALETTE.length], stack: "rev",
+  }));
+  new Chart(document.getElementById("chart-revenue-by-category"), {
+    data: { labels: d.years || [], datasets },
     options: { responsive:true, maintainAspectRatio:false,
-      scales: { y:{ title:{display:true,text:"Rs. per Consumer"}, ticks:{ callback:(v)=>fmt(v) } } },
+      scales: {
+        x: { stacked:true },
+        y: { stacked:true, title:{display:true,text:"Rs. Mn"}, ticks:{ callback:(v)=>fmt(v) } }
+      },
       plugins:{ legend:{position:"bottom"},
-        tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: Rs. ${fmt(ctx.parsed.y)}` } } }
+        tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${fmt(ctx.parsed.y)}` } } }
     }
   });
 }
@@ -357,10 +363,10 @@ function renderCapacityBalance(fy) {
   const cfg = {
     data: { labels: entry.months, datasets: [
       { type:"line", label:"System Peak", data:entry.system_peak, borderColor:PEAK_SYSTEM_COLOR,
-        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], borderWidth:3,
+        backgroundColor:PEAK_SYSTEM_COLOR, borderDash:[7,4], borderWidth:3, yAxisID:"y", stack:"peak-system",
         tension:0.2, pointRadius:2, pointStyle:"rectRot", order:0 },
       { type:"line", label:"National Peak", data:entry.national_peak, borderColor:PEAK_NATIONAL_COLOR,
-        backgroundColor:PEAK_NATIONAL_COLOR, borderWidth:3,
+        backgroundColor:PEAK_NATIONAL_COLOR, borderWidth:3, yAxisID:"y", stack:"peak-national",
         tension:0.2, pointRadius:2, pointStyle:"circle", order:0 },
       { type:"bar", label:"IPP", data:entry.ipp, backgroundColor:PALETTE[0], stack:"s", order:1 },
       { type:"bar", label:"NEA Subsidiary", data:entry.nea_sub, backgroundColor:PALETTE[1], stack:"s", order:1 },
@@ -419,7 +425,7 @@ function init() {
   safe("annualEnergy", renderAnnualEnergy);
   safe("consumers", renderConsumers);
   safe("sales", renderSales);
-  safe("revenuePerConsumer", renderRevenuePerConsumer);
+  safe("revenueByCategory", renderRevenueByCategory);
   safe("financial", renderFinancial);
   safe("transmission", renderTransmission);
   safe("substation", renderSubstation);
