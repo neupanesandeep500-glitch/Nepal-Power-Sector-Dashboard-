@@ -2044,7 +2044,7 @@ def render_overview(loader, recs):
 
     A System Performance Insights flip section (National vs System
     Peak Demand / Energy Import / Energy Export, sourced from the NEA
-    operational data) sits at the very top, above the Power Plants
+    operational data) sits at the bottom, below both Power Plants
     sections — those KPIs used to live only on the System Operational
     Performance tab; this surfaces the headline trend right on
     Overview instead."""
@@ -2053,17 +2053,6 @@ def render_overview(loader, recs):
     perf_title, perf_card, perf_fig = _nea_perf_flip_frame_only(0)
 
     return html.Div([
-        html.Div(html.H5(perf_title, className="m-0", id="nea-perf-flip-heading-text"),
-                 style=flip_heading_style()),
-        html.Div(
-            style=flip_frame_style(),
-            children=dbc.Row([
-                dbc.Col(html.Div(id="nea-perf-flip-card", children=perf_card,
-                                  style={"height": "auto", "minHeight": "360px"}), md=5),
-                dbc.Col(dcc.Graph(id="nea-perf-flip-chart", figure=perf_fig, style={"height": "360px"}), md=7),
-            ]),
-        ),
-        html.Hr(),
         html.Div(html.H5("⚡ Power Plants by Type", className="m-0"),
                  id="type-flip-heading", style=flip_heading_style()),
         html.Div(
@@ -2086,6 +2075,17 @@ def render_overview(loader, recs):
                                   style={"height": "auto", "minHeight": "360px"}), md=5),
                 dbc.Col(dcc.Graph(id="overview-province-flip-chart", figure=fig_prov,
                                    style={"height": "360px"}), md=7),
+            ]),
+        ),
+        html.Hr(),
+        html.Div(html.H5(perf_title, className="m-0", id="nea-perf-flip-heading-text"),
+                 style=flip_heading_style()),
+        html.Div(
+            style=flip_frame_style(),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="nea-perf-flip-card", children=perf_card,
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="nea-perf-flip-chart", figure=perf_fig, style={"height": "360px"}), md=7),
             ]),
         ),
     ])
