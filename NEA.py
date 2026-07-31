@@ -53,7 +53,6 @@ HOW TO WIRE THIS INTO app.py
 from __future__ import annotations
 
 import io
-import itertools
 import json
 import os
 import re
@@ -436,11 +435,25 @@ _AE_KEYWORDS = {
 def _series_by_alias(cats: dict, length: int):
     """Fuzzy-match each Annual Energy & Peak Load output key against the
     sheet's actual row labels, falling back to zeros so a missing/renamed
-    row degrades gracefully instead of KeyError-ing the whole dashboard."""
+    row degrades gracefully instead of KeyError-ing the whole dashboard.
+
+    Every returned series is clamped to exactly `length` items. The raw
+    sheet row can come back a cell longer or shorter than the Fiscal Year
+    row (a stray subtotal cell, a merged header, a trailing blank) — left
+    unclamped, that silently desyncs anything that reads "the last value"
+    from it: the Overview KPIs (latest_total_avail, avail_growth) and,
+    worse, the Forecast Lab's stacked-scenario bridge point, which reads
+    the array's true last element and can end up anchoring the forecast
+    line to a stray value instead of the real latest year."""
     out = {}
     for key, (must_include, must_exclude) in _AE_KEYWORDS.items():
         found = _find_key(cats, must_include, must_exclude)
-        out[key] = cats.get(found) if found else [0] * length
+        series = cats.get(found) if found else None
+        if series is None:
+            series = [0] * length
+        elif len(series) != length:
+            series = (list(series) + [None] * length)[:length]
+        out[key] = series
     return out
 
 
@@ -1011,8 +1024,20 @@ def _holt_forecast(y_hist, n_ahead):
 def _best_arima(y_hist, max_p=2, max_d=1, max_q=2):
     y = pd.Series(y_hist, dtype=float)
     best_aic, best_order, best_fit = np.inf, (1, 1, 0), None
-    for p, d, q in itertools.product(range(max_p + 1), range(max_d + 1), range(max_q + 1)):
-        if p == 0 and q == 0:
+    # A curated shortlist instead of the full (max_p+1)*(max_d+1)*(max_q+1)
+    # grid product (17 combos). Composite forecasts refit this per
+    # component (up to 4-7 per request for Generation/Energy Mix, and
+    # Hybrid pays the same cost since it calls this too), so the full
+    # grid can take long enough on a modest server to trip the gunicorn/
+    # Render request timeout and come back as an HTML error page instead
+    # of JSON. These orders cover what tends to actually win AIC on
+    # NEA's short annual/monthly series.
+    candidate_orders = [
+        (1, 1, 0), (0, 1, 1), (1, 1, 1), (2, 1, 0), (0, 1, 2),
+        (2, 1, 1), (1, 0, 0), (0, 1, 0), (2, 1, 2),
+    ]
+    for p, d, q in candidate_orders:
+        if p > max_p or d > max_d or q > max_q or (p == 0 and q == 0):
             continue
         try:
             fit = ARIMA(y, order=(p, d, q)).fit()
@@ -1040,10 +1065,18 @@ def _arima_forecast(y_hist, n_ahead):
 def _sarima_forecast(y_hist, n_ahead, season_length=12):
     y = pd.Series(y_hist, dtype=float)
     best_aic, best_spec, best_fit = np.inf, None, None
-    for order, sorder in itertools.product(
-        [(1, 1, 0), (0, 1, 1), (1, 1, 1)],
-        [(1, 0, 0, season_length), (0, 1, 1, season_length), (1, 1, 0, season_length)],
-    ):
+    # Curated shortlist instead of the full 3x3=9-combo product — SARIMAX
+    # fits are slower than plain ARIMA, and this runs per component on the
+    # monthly Energy Mix composite (up to 7 components in one request), so
+    # the full grid multiplies into a real timeout risk.
+    candidate_specs = [
+        ((1, 1, 0), (1, 0, 0, season_length)),
+        ((0, 1, 1), (0, 1, 1, season_length)),
+        ((1, 1, 1), (1, 1, 0, season_length)),
+        ((0, 1, 1), (1, 0, 0, season_length)),
+        ((1, 1, 0), (0, 1, 1, season_length)),
+    ]
+    for order, sorder in candidate_specs:
         try:
             fit = SARIMAX(y, order=order, seasonal_order=sorder,
                            enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
