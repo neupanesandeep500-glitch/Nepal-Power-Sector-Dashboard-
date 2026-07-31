@@ -346,7 +346,14 @@ function renderComposite(data) {
   // produced one (currently: arima/sarima)
   const aggPred = data.aggregate.pred_values || [];
   if (aggPred.length) {
-    const bridge = reported.length ? reported[reported.length - 1] : null;
+    // Anchor to the index the "Reported Total" line actually renders at
+    // (nPast - 1), not reported[reported.length - 1]. If the backend ever
+    // sends a reported[] array that's a different length than the past
+    // labels, indexing by "the array's last element" silently grabs the
+    // wrong year's value while the chart itself still renders correctly
+    // truncated/padded to nPast points — this keeps the bridge point
+    // locked to the same point the black line actually ends on.
+    const bridge = (nPast > 0 && reported.length >= nPast) ? reported[nPast - 1] : null;
     const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
     datasets.push({
       type: "line", label: "Forecast Total (sum of components)",
