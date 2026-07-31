@@ -1132,6 +1132,33 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
         pred, meta, fitted = _hybrid_forecast(x_hist, values, n_ahead)
     else:
         raise ValueError(f"Unknown model {model!r}")
+
+    # ── CONTINUITY CORRECTION ───────────────────────────────────────
+    # Holt/ARIMA/SARIMA forecast forward from their own internal
+    # smoothed level, not from the raw last actual observation. When
+    # that internal level doesn't exactly match the last real data
+    # point (e.g. a volatile last year), the forecast trajectory is
+    # still internally consistent, but the *chart* — which draws the
+    # raw history line up to the real base value and then starts the
+    # forecast line — shows an artificial jump right at the forecast
+    # start, even though nothing is actually wrong with the model.
+    # Anchor the whole forecast to the last real observation by
+    # shifting every predicted (and CI) point by the model's own
+    # last in-sample residual, so the forecast line always leaves
+    # from exactly where the history line ends.
+    last_actual = values[-1] if len(values) else None
+    last_fitted = fitted[-1] if fitted else None
+    if last_actual is not None and last_fitted is not None:
+        try:
+            offset = float(last_actual) - float(last_fitted)
+        except (TypeError, ValueError):
+            offset = 0.0
+        if offset:
+            pred = [p + offset for p in pred]
+            if lo:
+                lo = [v + offset for v in lo]
+            if hi:
+                hi = [v + offset for v in hi]
     return pred, meta, lo, hi, fitted
 
 
