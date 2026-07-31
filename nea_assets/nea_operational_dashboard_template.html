@@ -37,31 +37,23 @@
   <div id="nea-content">
   <div class="nea-kpi-grid" id="nea-kpi-grid"></div>
 
+  <div class="nea-controls" style="margin-bottom:4px;">
+    <i class="fas fa-layer-group"></i>&nbsp;View:
+    <select class="nea-select" id="nea-category-select">
+      <option value="technical">🔧 Technical Performance</option>
+      <option value="financial">💰 Financial Performance</option>
+    </select>
+  </div>
+
+  <div class="nea-cat" data-cat="technical">
   <div class="nea-section">
     <h3><i class="fas fa-bolt"></i> Annual Energy Availability &amp; Peak Demand</h3>
     <div class="nea-chart-box tall"><canvas id="chart-annual-energy"></canvas></div>
   </div>
 
-  <div class="nea-grid-2">
-    <div class="nea-section">
-      <h3><i class="fas fa-plug-circle-bolt"></i> System Loss (%)</h3>
-      <div class="nea-chart-box"><canvas id="chart-system-loss"></canvas></div>
-    </div>
-    <div class="nea-section">
-      <h3><i class="fas fa-users"></i> Consumers Growth</h3>
-      <div class="nea-chart-box"><canvas id="chart-consumers"></canvas></div>
-    </div>
-  </div>
-
-  <div class="nea-grid-2">
-    <div class="nea-section">
-      <h3><i class="fas fa-sack-dollar"></i> Sales Revenue</h3>
-      <div class="nea-chart-box"><canvas id="chart-sales"></canvas></div>
-    </div>
-    <div class="nea-section">
-      <h3><i class="fas fa-scale-balanced"></i> Financial: Revenue vs Profit/Loss</h3>
-      <div class="nea-chart-box"><canvas id="chart-financial"></canvas></div>
-    </div>
+  <div class="nea-section">
+    <h3><i class="fas fa-plug-circle-bolt"></i> System Loss (%)</h3>
+    <div class="nea-chart-box"><canvas id="chart-system-loss"></canvas></div>
   </div>
 
   <div class="nea-grid-2">
@@ -90,6 +82,25 @@
     </div>
     <div class="nea-chart-box tall"><canvas id="chart-capacity-balance"></canvas></div>
   </div>
+  </div>
+  <!-- /technical -->
+
+  <div class="nea-cat" data-cat="financial">
+  <div class="nea-grid-2">
+    <div class="nea-section">
+      <h3><i class="fas fa-sack-dollar"></i> Sales Revenue</h3>
+      <div class="nea-chart-box"><canvas id="chart-sales"></canvas></div>
+    </div>
+    <div class="nea-section">
+      <h3><i class="fas fa-scale-balanced"></i> Financial: Revenue vs Profit/Loss</h3>
+      <div class="nea-chart-box"><canvas id="chart-financial"></canvas></div>
+    </div>
+  </div>
+
+  <div class="nea-section">
+    <h3><i class="fas fa-users"></i> Consumers Growth</h3>
+    <div class="nea-chart-box"><canvas id="chart-consumers"></canvas></div>
+  </div>
 
   <div class="nea-grid-2">
     <div class="nea-section">
@@ -103,6 +114,8 @@
       <div class="nea-chart-box"><canvas id="chart-export"></canvas></div>
     </div>
   </div>
+  </div>
+  <!-- /financial -->
 
   <div class="nea-footnote">Source: NEA Operational Data workbook (live-synced from Google Sheet). Data shown reflects the most recent successful sync.</div>
   </div>
@@ -346,6 +359,18 @@ function safe(label, fn) {
   }
 }
 
+function setupCategorySelect() {
+  const sel = document.getElementById("nea-category-select");
+  if (!sel) return;
+  const apply = () => {
+    document.querySelectorAll(".nea-cat").forEach(el => {
+      el.style.display = (el.dataset.cat === sel.value) ? "" : "none";
+    });
+  };
+  sel.addEventListener("change", apply);
+  apply();
+}
+
 function init() {
   if (typeof Chart === "undefined") {
     document.getElementById("nea-content").insertAdjacentHTML("afterbegin",
@@ -396,6 +421,13 @@ function init() {
       expChart = renderMonthlySingle("chart-export", expKeys[expKeys.length - 1], DATA.exportData, months, null);
     });
   }
+
+  // Apply the Technical/Financial filter LAST, after every chart above
+  // has been created while its container was still visible — Chart.js
+  // sizes a canvas at creation time, so toggling a section to
+  // display:none only after that keeps every chart correctly sized
+  // once the user switches back to it.
+  setupCategorySelect();
 }
 
 if (!DATA || Object.keys(DATA).length === 0) {
