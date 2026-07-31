@@ -25,6 +25,13 @@
   .nea-chart-box { position:relative; height:320px; }
   .nea-chart-box.tall { height:380px; }
   select.nea-select { padding:6px 10px; border-radius:6px; border:1px solid #c7d2e2; font-size:13px; margin-left:8px; }
+  .nea-subtabs-nav { display:flex; flex-wrap:wrap; gap:4px; margin-bottom:14px; }
+  .nea-subtab-btn { cursor:pointer; font-weight:600; font-size:13px; color:#37474f;
+    border:1px solid transparent; border-radius:6px; padding:8px 16px; background:#eef1f6;
+    transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease; }
+  .nea-subtab-btn:hover { background:#dbe6f7; color:#0d47a1; transform:translateY(-1px); }
+  .nea-subtab-btn.active { color:#fff; background:linear-gradient(135deg,#00897b 0%,#00695c 100%);
+    box-shadow:0 2px 7px rgba(0,105,92,0.4); }
   .nea-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:10px; font-size:13px; font-weight:600; color:#37474f; }
   .nea-footnote { font-size:11px; color:#8592ab; margin-top:8px; }
   .nea-error { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; }
@@ -37,12 +44,9 @@
   <div id="nea-content">
   <div class="nea-kpi-grid" id="nea-kpi-grid"></div>
 
-  <div class="nea-controls" style="margin-bottom:4px;">
-    <i class="fas fa-layer-group"></i>&nbsp;View:
-    <select class="nea-select" id="nea-category-select">
-      <option value="technical">🔧 Technical Performance</option>
-      <option value="financial">💰 Financial Performance</option>
-    </select>
+  <div class="nea-subtabs-nav" id="nea-category-tabs" role="tablist">
+    <button type="button" class="nea-subtab-btn active" data-cat="technical">🔧 Technical Performance</button>
+    <button type="button" class="nea-subtab-btn" data-cat="financial">💰 Financial Performance</button>
   </div>
 
   <div class="nea-cat" data-cat="technical">
@@ -402,15 +406,18 @@ function safe(label, fn) {
 }
 
 function setupCategorySelect() {
-  const sel = document.getElementById("nea-category-select");
-  if (!sel) return;
-  const apply = () => {
+  const nav = document.getElementById("nea-category-tabs");
+  if (!nav) return;
+  const buttons = nav.querySelectorAll(".nea-subtab-btn");
+  const apply = (cat) => {
     document.querySelectorAll(".nea-cat").forEach(el => {
-      el.style.display = (el.dataset.cat === sel.value) ? "" : "none";
+      el.style.display = (el.dataset.cat === cat) ? "" : "none";
     });
+    buttons.forEach(b => b.classList.toggle("active", b.dataset.cat === cat));
   };
-  sel.addEventListener("change", apply);
-  apply();
+  buttons.forEach(btn => btn.addEventListener("click", () => apply(btn.dataset.cat)));
+  const initial = nav.querySelector(".nea-subtab-btn.active");
+  apply(initial ? initial.dataset.cat : "technical");
 }
 
 function init() {
