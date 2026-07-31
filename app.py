@@ -825,6 +825,7 @@ app.layout = dbc.Container(fluid=True, children=[
     dcc.Interval(id="refresh-poll", n_intervals=0, interval=36000_000),
     dcc.Interval(id="type-flip-interval", n_intervals=0, interval=6_000),
     dcc.Interval(id="province-flip-interval", n_intervals=0, interval=6_000),
+    dcc.Interval(id="nea-perf-flip-interval", n_intervals=0, interval=6_000),
    
    html.Footer(className="site-footer", children=[
         dbc.Row([
@@ -2039,11 +2040,30 @@ def render_overview(loader, recs):
     card flips WITH it, showing that type's/province's own stage
     breakdown rather than staying on one constant full-comparison
     chart. Transmission Line is excluded here so it never gets mixed
-    into the Power Plants by Type card/chart (it gets its own tab)."""
+    into the Power Plants by Type card/chart (it gets its own tab).
+
+    A System Performance Insights flip section (National vs System
+    Peak Demand / Energy Import / Energy Export, sourced from the NEA
+    operational data) sits at the very top, above the Power Plants
+    sections — those KPIs used to live only on the System Operational
+    Performance tab; this surfaces the headline trend right on
+    Overview instead."""
     card, bg_url, fig_type = _flip_card_only(0)
     prov_card, prov_bg_url, fig_prov = _overview_province_flip_card_only(0)
+    perf_title, perf_card, perf_fig = _nea_perf_flip_frame_only(0)
 
     return html.Div([
+        html.Div(html.H5(perf_title, className="m-0", id="nea-perf-flip-heading-text"),
+                 style=flip_heading_style()),
+        html.Div(
+            style=flip_frame_style(),
+            children=dbc.Row([
+                dbc.Col(html.Div(id="nea-perf-flip-card", children=perf_card,
+                                  style={"height": "auto", "minHeight": "360px"}), md=5),
+                dbc.Col(dcc.Graph(id="nea-perf-flip-chart", figure=perf_fig, style={"height": "360px"}), md=7),
+            ]),
+        ),
+        html.Hr(),
         html.Div(html.H5("⚡ Power Plants by Type", className="m-0"),
                  id="type-flip-heading", style=flip_heading_style()),
         html.Div(
@@ -2178,6 +2198,96 @@ def _flip_card_only(n):
 def flip_type_card(n):
     card, bg_url, fig = _flip_card_only(n)
     return card, flip_frame_style(), flip_heading_style(), fig
+
+
+# ── NEA SYSTEM PERFORMANCE FLIP (Overview, top section) ─────────────────────
+def _nea_perf_flip_frames():
+    """Frames for the Overview's top 'System Performance Insights'
+    flip section — National vs System Peak Demand, Energy Import,
+    Energy Export — each pulled straight from NEA.get_dashboard_data(),
+    the same live-synced cache the System Operational Performance tab
+    reads. Returns [] (frames skipped) for any series that hasn't
+    synced yet, rather than showing an empty/broken chart."""
+    try:
+        data = NEA.get_dashboard_data() or {}
+    except Exception:
+        data = {}
+    ae = data.get("annualEnergy") or {}
+    fin = data.get("financial") or {}
+    frames = []
+
+    def _last_real(seq):
+        for v in reversed(seq or []):
+            if v is not None:
+                return v
+        return None
+
+    years_ae = ae.get("years") or []
+    nat_peak = ae.get("national_peak") or []
+    sys_peak = ae.get("system_peak") or []
+    if years_ae and (nat_peak or sys_peak):
+        fig = go.Figure()
+        if nat_peak:
+            fig.add_trace(go.Scatter(x=years_ae, y=nat_peak, name="National Peak (MW)",
+                                      mode="lines+markers", line=dict(color="#1565c0", width=3)))
+        if sys_peak:
+            fig.add_trace(go.Scatter(x=years_ae, y=sys_peak, name="System Peak (MW)",
+                                      mode="lines+markers", line=dict(color="#c62828", width=3)))
+        fig.update_layout(title="National vs System Peak Demand (MW)", template="plotly_white",
+                           height=360, legend=dict(orientation="h", y=-0.22),
+                           margin=dict(t=50, b=60, l=40, r=20))
+        add_watermark(fig)
+        last_nat, last_sys = _last_real(nat_peak), _last_real(sys_peak)
+        card = kpi_card("National Peak Demand",
+                          f"{last_nat:,.1f} MW" if last_nat is not None else "—",
+                          f"System Peak: {last_sys:,.1f} MW" if last_sys is not None else "System Peak: —",
+                          "#1565c0")
+        frames.append(("⚡ System Performance — National vs System Peak Demand", card, fig))
+
+    years_fin = fin.get("years") or []
+    imp = fin.get("import_mu") or []
+    if years_fin and imp and any(v is not None for v in imp):
+        fig = go.Figure([go.Bar(x=years_fin, y=imp, marker_color="#6a1b9a", name="Import (MU)")])
+        fig.update_layout(title="Energy Import from India (MU)", template="plotly_white",
+                           height=360, margin=dict(t=50, b=40, l=40, r=20))
+        add_watermark(fig)
+        last_imp = _last_real(imp)
+        card = kpi_card("Latest Energy Import",
+                          f"{last_imp:,.1f} MU" if last_imp is not None else "—",
+                          "From India, latest fiscal year", "#6a1b9a")
+        frames.append(("🔁 System Performance — Energy Import", card, fig))
+
+    exp = fin.get("export_mu") or []
+    if years_fin and exp and any(v is not None for v in exp):
+        fig = go.Figure([go.Bar(x=years_fin, y=exp, marker_color="#2e7d32", name="Export (MU)")])
+        fig.update_layout(title="Energy Export (MU)", template="plotly_white",
+                           height=360, margin=dict(t=50, b=40, l=40, r=20))
+        add_watermark(fig)
+        last_exp = _last_real(exp)
+        card = kpi_card("Latest Energy Export",
+                          f"{last_exp:,.1f} MU" if last_exp is not None else "—",
+                          "Latest fiscal year", "#2e7d32")
+        frames.append(("🔁 System Performance — Energy Export", card, fig))
+
+    return frames
+
+
+def _nea_perf_flip_frame_only(n):
+    frames = _nea_perf_flip_frames()
+    if not frames:
+        return "🏭 System Performance Insights", None, go.Figure()
+    title, card, fig = frames[n % len(frames)]
+    return title, card, fig
+
+
+@app.callback(
+    Output("nea-perf-flip-heading-text", "children"),
+    Output("nea-perf-flip-card", "children"),
+    Output("nea-perf-flip-chart", "figure"),
+    Input("nea-perf-flip-interval", "n_intervals"),
+)
+def flip_nea_perf_card(n):
+    return _nea_perf_flip_frame_only(n)
 
 
 # ── STAGE FLIP CARD (for Plants tab) ───────────────────────────────────────
