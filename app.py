@@ -513,6 +513,58 @@ def kpi_card(title, value, sub, color):
     )
 
 
+def kpi_card_compact(title, value, sub, color):
+    """Same shape as kpi_card but with smaller fonts, so a denser row
+    (e.g. the NEA operational KPIs alongside the license KPIs) fits
+    without the card growing or wrapping awkwardly."""
+    return dbc.Card(
+        dbc.CardBody([
+            html.Div(title, className="text-muted fw-semibold text-uppercase",
+                      style={"fontSize": "10px"}),
+            html.Div(value, className="fw-bold", style={"color": color, "fontSize": "17px"}),
+            html.Div(sub, className="text-muted", style={"fontSize": "11px"}),
+        ], style={"padding": "10px 12px"}),
+        className="shadow-sm h-100",
+        style={"borderTop": f"3px solid {color}"},
+    )
+
+
+def nea_kpi_cards():
+    """NEA operational KPIs for the Overview row, pulled straight from
+    NEA.py's own kpi dict (the same figures the NEA Operational Data tab
+    shows) — no separate parsing here. Returns [] if NEA data hasn't
+    synced yet, so the Overview row just falls back to the license KPIs
+    alone rather than showing empty/broken cards."""
+    try:
+        data = NEA.get_dashboard_data() or {}
+    except Exception:
+        data = {}
+    k = data.get("kpi") or {}
+    if not k:
+        return []
+
+    def yoy(v, good_if_up=True):
+        if v is None:
+            return "—"
+        arrow = "▲" if v >= 0 else "▼"
+        good = (v >= 0) == good_if_up
+        return arrow + f" {abs(v):,.2f}% YoY"
+
+    return [
+        kpi_card_compact("Peak Demand (MW)", f"{k.get('latest_peak', 0):,.1f}",
+                          yoy(k.get("peak_growth")), "#6a1b9a"),
+        kpi_card_compact("System Loss (%)", f"{k.get('latest_system_loss', 0):,.2f}%",
+                          (f"▼ {k.get('loss_reduction', 0):,.2f} pts YoY" if (k.get("loss_reduction") or 0) >= 0
+                           else f"▲ {abs(k.get('loss_reduction', 0)):,.2f} pts YoY"), "#c62828"),
+        kpi_card_compact("Total Availability (MU)", f"{k.get('latest_total_avail', 0):,.1f}",
+                          yoy(k.get("avail_growth")), "#00838f"),
+        kpi_card_compact("Latest Revenue (Rs. Mn)", f"{k.get('latest_revenue', 0):,.1f}",
+                          yoy(k.get("revenue_growth")), "#2e7d32"),
+        kpi_card_compact("Total Consumers", f"{k.get('total_consumers', 0):,.0f}",
+                          yoy(k.get("consumer_increase_pct")), "#1565c0"),
+    ]
+
+
 def sidebar():
     return dbc.Card(
         dbc.CardBody([
@@ -679,15 +731,11 @@ app.layout = dbc.Container(fluid=True, children=[
 
     dbc.Tabs(id="main-tabs", active_tab="overview", className="main-tabs-nav", children=[
         dbc.Tab(label="📊 Overview", tab_id="overview"),
-        dbc.Tab(label="⚡ Power Plants", tab_id="plants"),
-        dbc.Tab(label="🔌 Transmission Line", tab_id="transmission"),
-        dbc.Tab(label="📋 GoN Studied Projects", tab_id="gon_study"),
-        dbc.Tab(label="🚫 License Cancelled", tab_id="cancelled"),
-        dbc.Tab(label="📈 Growth Trends", tab_id="growth"),
+        dbc.Tab(label="📜 License Status", tab_id="license_status"),
+        dbc.Tab(label="📈 License Insights", tab_id="license_insights"),
         dbc.Tab(label="🗺️ GIS Map", tab_id="gis"),
-        dbc.Tab(label="📉 Comparative Charts", tab_id="compare"),
         dbc.Tab(label="🗂️ Data Table", tab_id="table"),
-        dbc.Tab(label="🏭 NEA Operational Data", tab_id="nea_operational"),
+        dbc.Tab(label="🏭 System Operational Performance", tab_id="nea_operational"),
         dbc.Tab(label="🔬 NEA Forecast Lab", tab_id="nea_forecast"),
         dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
     ]),
@@ -929,9 +977,6 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
     tx_mw = sum(r["capacity_mw"] or 0 for r in tx_recs)
     tx_km = sum(r["line_length_km"] or 0 for r in tx_recs)
 
-    n_gon = sum(1 for r in recs if r["status"] == "GoN Study Project")
-    n_cancelled = sum(1 for r in recs if r["status"] == "Cancelled")
-
     cards = [
         # REQ 7: Installed Capacity first
         kpi_card("Installed Capacity", f"{op_mw:,.1f} MW",
@@ -940,12 +985,11 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
                   f"{plant_mw:,.1f} MW Total • {n_operating:,} operating", "#1565c0"),
         kpi_card("Transmission Lines", f"{n_tx:,} Projects",
                   f"{tx_mw:,.1f} MW • {tx_km:,.1f} km circuit length", "#6a1b9a"),
-        kpi_card("GoN Studied Projects", f"{n_gon:,}",
-                  "studied, not counted in active capacity", "#0277bd"),
-        kpi_card("License Cancelled", f"{n_cancelled:,}",
-                  "cancelled, not counted in active capacity", "#c62828"),
     ]
-    return [dbc.Col(c, md=4, lg=2) for c in cards]
+    cols = [dbc.Col(c, md=4, lg=4) for c in cards]
+    nea_cards = nea_kpi_cards()
+    cols += [dbc.Col(c, md=4, lg=2, xl=2) for c in nea_cards]
+    return cols
 
 
 @app.callback(
@@ -988,6 +1032,35 @@ def update_ticker(_status, _poll, f_type, f_status, f_province, f_capacity, f_tx
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     return render_ticker_bar(loader, recs)
+
+
+# ── MERGED TAB SHELLS (License Status / License Insights) ──────────────────
+def license_status_shell():
+    """Power Plants / Transmission Line / GoN Studied Projects / License
+    Cancelled, merged under one parent tab as sub-tabs so they share
+    one slot in the main nav. Content is filled in by a dedicated
+    callback keyed on the sub-tabs' own active_tab (see below) — this
+    just lays out the sub-nav + an empty content slot."""
+    return html.Div([
+        dbc.Tabs(id="license-status-subtabs", active_tab="plants", className="mb-3", children=[
+            dbc.Tab(label="⚡ Power Plants", tab_id="plants"),
+            dbc.Tab(label="🔌 Transmission Line", tab_id="transmission"),
+            dbc.Tab(label="📋 GoN Studied Projects", tab_id="gon_study"),
+            dbc.Tab(label="🚫 License Cancelled", tab_id="cancelled"),
+        ]),
+        dcc.Loading(html.Div(id="license-status-content")),
+    ])
+
+
+def license_insights_shell():
+    """Growth Trends + Comparative Charts, merged the same way."""
+    return html.Div([
+        dbc.Tabs(id="license-insights-subtabs", active_tab="growth", className="mb-3", children=[
+            dbc.Tab(label="📈 Growth Trends", tab_id="growth"),
+            dbc.Tab(label="📉 Comparative Charts", tab_id="compare"),
+        ]),
+        dcc.Loading(html.Div(id="license-insights-content")),
+    ])
 
 
 # ── TAB CONTENT ────────────────────────────────────────────────────────────
@@ -1072,6 +1145,12 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
                 html.Pre(tb, className="small mt-2", style={"whiteSpace": "pre-wrap"}),
             ], color="danger", className="mt-3"), gis_controls_style, sidebar_style, sidebar_md, content_md)
 
+    if tab == "license_status":
+        return (license_status_shell(), gis_controls_style, sidebar_style, sidebar_md, content_md)
+
+    if tab == "license_insights":
+        return (license_insights_shell(), gis_controls_style, sidebar_style, sidebar_md, content_md)
+
     # GIS tab: intentionally bypass the sidebar's own filter panel (f-type,
     # f-status, f-province, f-capacity, f-year, f-search, f-date/cod range,
     # f-district, f-local). That panel is hidden on this tab (see above) but
@@ -1125,6 +1204,84 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
             html.Pre(tb, className="small mt-2", style={"whiteSpace": "pre-wrap"}),
         ], color="danger", className="mt-3"), gis_controls_style, sidebar_style, sidebar_md, content_md)
 
+
+# ── MERGED-TAB SUB-CONTENT CALLBACKS ────────────────────────────────────────
+@app.callback(
+    Output("license-status-content", "children"),
+    Input("license-status-subtabs", "active_tab"),
+    Input("f-type", "value"), Input("f-status", "value"), Input("f-province", "value"),
+    Input("f-capacity", "value"), Input("f-tx-length", "value"), Input("f-year", "data"),
+    Input("f-search", "value"),
+    Input("f-date-from", "value"), Input("f-date-to", "value"),
+    Input("f-cod-from", "value"), Input("f-cod-to", "value"),
+    Input("f-district", "value"), Input("f-local", "value"),
+)
+def render_license_status_subtab(subtab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year,
+                                  f_search, f_date_from, f_date_to, f_cod_from, f_cod_to,
+                                  f_district, f_local):
+    loader = STATE["loader"]
+    if loader is None or loader.error or not loader.records:
+        return dbc.Alert("No project data is loaded yet.", color="info", className="mt-2")
+    recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
+                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
+                                 f_district, f_local)
+    if not recs:
+        return dbc.Alert("No projects match the current filters.", color="warning", className="mt-2")
+    active_recs = [r for r in recs if r["status"] not in de.EXTRA_STATUS_ORDER]
+    try:
+        if subtab == "plants":
+            return render_plants_tab(loader, active_recs)
+        elif subtab == "transmission":
+            return render_transmission_tab(loader, active_recs)
+        elif subtab == "gon_study":
+            return render_side_category_tab(loader, recs, "GoN Study Project", "GoN Studied Projects")
+        elif subtab == "cancelled":
+            return render_side_category_tab(loader, recs, "Cancelled", "License Cancelled")
+        return html.Div()
+    except Exception:
+        tb = traceback.format_exc()
+        traceback.print_exc()
+        return dbc.Alert([
+            html.Div(f"This tab hit an error while rendering: {subtab}", className="fw-semibold"),
+            html.Pre(tb, className="small mt-2", style={"whiteSpace": "pre-wrap"}),
+        ], color="danger", className="mt-3")
+
+
+@app.callback(
+    Output("license-insights-content", "children"),
+    Input("license-insights-subtabs", "active_tab"),
+    Input("f-type", "value"), Input("f-status", "value"), Input("f-province", "value"),
+    Input("f-capacity", "value"), Input("f-tx-length", "value"), Input("f-year", "data"),
+    Input("f-search", "value"),
+    Input("f-date-from", "value"), Input("f-date-to", "value"),
+    Input("f-cod-from", "value"), Input("f-cod-to", "value"),
+    Input("f-district", "value"), Input("f-local", "value"),
+)
+def render_license_insights_subtab(subtab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year,
+                                    f_search, f_date_from, f_date_to, f_cod_from, f_cod_to,
+                                    f_district, f_local):
+    loader = STATE["loader"]
+    if loader is None or loader.error or not loader.records:
+        return dbc.Alert("No project data is loaded yet.", color="info", className="mt-2")
+    recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
+                                 f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
+                                 f_district, f_local)
+    if not recs:
+        return dbc.Alert("No projects match the current filters.", color="warning", className="mt-2")
+    active_recs = [r for r in recs if r["status"] not in de.EXTRA_STATUS_ORDER]
+    try:
+        if subtab == "growth":
+            return render_growth(loader, active_recs)
+        elif subtab == "compare":
+            return render_compare(loader, active_recs)
+        return html.Div()
+    except Exception:
+        tb = traceback.format_exc()
+        traceback.print_exc()
+        return dbc.Alert([
+            html.Div(f"This tab hit an error while rendering: {subtab}", className="fw-semibold"),
+            html.Pre(tb, className="small mt-2", style={"whiteSpace": "pre-wrap"}),
+        ], color="danger", className="mt-3")
 
 # ── STATUS / PROVINCE / TYPE COLOR HELPERS ─────────────────────────────────
 
@@ -1288,6 +1445,67 @@ def _fmt_admin_all(totals, top_n=None):
     if top_n:
         ordered = ordered[:top_n]
     return ", ".join(f"{name} ({mw:,.0f} MW)" for name, mw in ordered)
+def _nea_ticker_segments():
+    """NEA operational insights for the marquee — pulls straight from
+    NEA.py's own kpi dict and unit_economics() (same figures shown on
+    the NEA Operational Data tab), so nothing here is a separate parse
+    of the sheet. Returns [] if NEA data hasn't synced yet."""
+    try:
+        data = NEA.get_dashboard_data() or {}
+    except Exception:
+        return []
+    k = data.get("kpi") or {}
+    if not k:
+        return []
+    fin = data.get("financial") or {}
+    segs = []
+
+    def yoy_txt(v):
+        if v is None:
+            return "n/a"
+        return f"{'+' if v >= 0 else ''}{v:,.2f}% YoY"
+
+    segs.append((f"🏭 NEA PEAK DEMAND: {k.get('latest_peak', 0):,.1f} MW ({yoy_txt(k.get('peak_growth'))})",
+                 "#9fd8ff"))
+    segs.append((f"📉 NEA SYSTEM LOSS: {k.get('latest_system_loss', 0):,.2f}% "
+                 f"({'down' if (k.get('loss_reduction') or 0) >= 0 else 'up'} "
+                 f"{abs(k.get('loss_reduction', 0)):,.2f} pts vs last year)", "#ffb4a2"))
+    segs.append((f"💰 NEA REVENUE: Rs. {k.get('latest_revenue', 0):,.1f} Mn ({yoy_txt(k.get('revenue_growth'))})",
+                 "#b9f6ca"))
+    segs.append((f"⚡ NEA AVAILABILITY: {k.get('latest_total_avail', 0):,.1f} MU ({yoy_txt(k.get('avail_growth'))})",
+                 "#ffe082"))
+
+    # Import / export summary for the latest year, with YoY change
+    imp_mu, exp_mu = fin.get("import_mu") or [], fin.get("export_mu") or []
+    if imp_mu and exp_mu and len(imp_mu) == len(exp_mu):
+        def latest_and_yoy(series):
+            vals = [v for v in series if v is not None]
+            if not vals:
+                return None, None
+            if len(vals) < 2 or not vals[-2]:
+                return vals[-1], None
+            return vals[-1], round((vals[-1] - vals[-2]) / abs(vals[-2]) * 100, 2)
+        imp_latest, imp_yoy = latest_and_yoy(imp_mu)
+        exp_latest, exp_yoy = latest_and_yoy(exp_mu)
+        if imp_latest is not None or exp_latest is not None:
+            segs.append((f"🔁 IMPORT/EXPORT (latest FY): Import {imp_latest or 0:,.1f} MU "
+                         f"({yoy_txt(imp_yoy)}) | Export {exp_latest or 0:,.1f} MU ({yoy_txt(exp_yoy)})",
+                         "#d0bfff"))
+
+    try:
+        econ = NEA.unit_economics()
+        for key, label in [("import_rate_rs_per_unit", "Avg. Import Rate"),
+                            ("export_rate_rs_per_unit", "Avg. Export Rate"),
+                            ("avg_revenue_rate_rs_per_unit", "Avg. Revenue Rate")]:
+            vals = [v for v in econ.get(key, []) if v is not None]
+            if vals:
+                segs.append((f"💵 {label}: Rs. {vals[-1]:,.2f}/kWh", "#e0e0e0"))
+    except Exception:
+        pass
+
+    return segs
+
+
 def build_ticker_segments(loader, recs=None):
     all_recs = recs if recs is not None else loader.records
     plants = [r for r in all_recs if r["type"] != "Transmission Line" and r["status"] in de.STATUS_ORDER]
@@ -1391,6 +1609,8 @@ def build_ticker_segments(loader, recs=None):
                      f"{de.fmt_mw(r['capacity_mw'])} MW • {_admin_units_str(r, max_each=None)} • "
                      f"{textwrap.shorten(r['promoter'] or '—', 26)} • "
                      f"COD {de.bs_str(r['cod_bs'])}", "#c9b6ff"))
+
+    segs.extend(_nea_ticker_segments())
     return segs
     
 _TICKER_BG_RGB = (0x10, 0x17, 0x26)  # matches .ticker-bar background: #101726
