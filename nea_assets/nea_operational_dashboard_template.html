@@ -102,6 +102,11 @@
     <div class="nea-chart-box"><canvas id="chart-consumers"></canvas></div>
   </div>
 
+  <div class="nea-section">
+    <h3><i class="fas fa-hand-holding-dollar"></i> Revenue Collection per Consumer</h3>
+    <div class="nea-chart-box"><canvas id="chart-revenue-per-consumer"></canvas></div>
+  </div>
+
   <div class="nea-grid-2">
     <div class="nea-section">
       <h3><i class="fas fa-right-to-bracket"></i> Energy Import from India (GWh/month)</h3>
@@ -212,12 +217,20 @@ function renderConsumers() {
   const d = DATA.consumers || {};
   new Chart(document.getElementById("chart-consumers"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"Total Consumers", data:d.total, backgroundColor:PALETTE[0], order:1 },
-      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, order:0 },
+      { type:"bar", label:"Total Consumers", data:d.total, backgroundColor:PALETTE[0], yAxisID:"y", order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, pointRadius:3, order:0 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}, beginAtZero:true, max:niceMax(d.growth_pct,1.2)} },
-      plugins:{legend:{position:"bottom"}} }
+      scales: {
+        y:{ position:"left", title:{display:true,text:"Consumers"}, ticks:{ callback:(v)=>fmt(v) } },
+        y1:{ position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"} }
+      },
+      plugins:{legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>{
+          const v = ctx.parsed.y;
+          return ctx.dataset.yAxisID === "y1" ? `${ctx.dataset.label}: ${fmt(v)}%` : `${ctx.dataset.label}: ${fmt(v)}`;
+        } } } }
+    }
   });
 }
 
@@ -225,12 +238,35 @@ function renderSales() {
   const d = DATA.sales || {};
   new Chart(document.getElementById("chart-sales"), {
     data: { labels: d.years || [], datasets: [
-      { type:"bar", label:"Total Gross Revenue (Rs. Mn)", data:d.total, backgroundColor:PALETTE[1], order:1 },
-      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:PALETTE[3], tension:0.25, borderWidth:2, order:0 },
+      { type:"bar", label:"Total Gross Revenue (Rs. Mn)", data:d.total, backgroundColor:PALETTE[1], yAxisID:"y", order:1 },
+      { type:"line", label:"Growth %", data:d.growth_pct, yAxisID:"y1", borderColor:"#1565c0", backgroundColor:"#1565c0", tension:0.25, borderWidth:2, pointRadius:3, order:0 },
     ]},
     options: { responsive:true, maintainAspectRatio:false,
-      scales: { y1:{position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"}, beginAtZero:true, max:niceMax(d.growth_pct,1.2)} },
-      plugins:{legend:{position:"bottom"}} }
+      scales: {
+        y:{ position:"left", title:{display:true,text:"Rs. Mn"}, ticks:{ callback:(v)=>fmt(v) } },
+        y1:{ position:"right", grid:{drawOnChartArea:false}, title:{display:true,text:"%"} }
+      },
+      plugins:{legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>{
+          const v = ctx.parsed.y;
+          return ctx.dataset.yAxisID === "y1" ? `${ctx.dataset.label}: ${fmt(v)}%` : `${ctx.dataset.label}: ${fmt(v)}`;
+        } } } }
+    }
+  });
+}
+
+function renderRevenuePerConsumer() {
+  const d = DATA.revenuePerConsumer || {};
+  new Chart(document.getElementById("chart-revenue-per-consumer"), {
+    type: "bar",
+    data: { labels: d.years || [], datasets: [
+      { label:"Revenue Collection per Consumer (Rs.)", data:d.value, backgroundColor:PALETTE[2] },
+    ]},
+    options: { responsive:true, maintainAspectRatio:false,
+      scales: { y:{ title:{display:true,text:"Rs. per Consumer"}, ticks:{ callback:(v)=>fmt(v) } } },
+      plugins:{ legend:{position:"bottom"},
+        tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: Rs. ${fmt(ctx.parsed.y)}` } } }
+    }
   });
 }
 
@@ -383,6 +419,7 @@ function init() {
   safe("annualEnergy", renderAnnualEnergy);
   safe("consumers", renderConsumers);
   safe("sales", renderSales);
+  safe("revenuePerConsumer", renderRevenuePerConsumer);
   safe("financial", renderFinancial);
   safe("transmission", renderTransmission);
   safe("substation", renderSubstation);
