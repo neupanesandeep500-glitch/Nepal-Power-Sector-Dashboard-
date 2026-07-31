@@ -279,6 +279,40 @@ footer.site-footer a:hover { text-decoration: underline; }
 /* ── Custom tab styling ──────────────────────────────────────────────────── */
 .custom-style-panel { background: #f8f9fa; border-radius: 8px; padding: 20px; }
 .custom-style-panel h5 { color: #1565c0; margin-bottom: 16px; }
+
+/* ── REQ 2: all KPI cards in one row, shrinking evenly to fit ─────────────── */
+.kpi-flex-row { display: flex; flex-wrap: nowrap; gap: 10px; align-items: stretch;
+  overflow-x: auto; padding-bottom: 2px; }
+.kpi-flex-item { flex: 1 1 0; min-width: 118px; }
+.kpi-flex-item .card { height: 100%; }
+.kpi-flex-item .card-body { padding: 8px 10px !important; }
+.kpi-flex-item .card-body > div:first-child { font-size: 9px !important; white-space: nowrap; }
+.kpi-flex-item .card-body > div:nth-child(2) { font-size: clamp(12px, 1.6vw, 16px) !important;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpi-flex-item .card-body > div:nth-child(3) { font-size: 9.5px !important;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 991px) { .kpi-flex-row { flex-wrap: wrap; overflow-x: visible; }
+  .kpi-flex-item { flex: 1 1 45%; min-width: 130px; } }
+@media (max-width: 575px) { .kpi-flex-item { flex: 1 1 100%; } }
+
+/* ── REQ 3/6: every sub-tab bar in the system gets one consistent,       ── */
+/* ── clearly-distinct active state (teal/green so it reads as a level    ── */
+/* ── below the blue main-tabs-nav, never confused with it or the         ── */
+/* ── inactive tabs around it).                                           ── */
+.sub-tabs-nav .nav-link, .nea-subtabs-nav .nea-subtab-btn {
+  font-weight: 600; font-size: 13px; color: #37474f; border: 1px solid transparent;
+  border-radius: 6px; padding: 7px 14px; margin-right: 4px; background: #eef1f6;
+  transition: transform 0.12s ease, background 0.15s ease, color 0.15s ease;
+}
+.sub-tabs-nav .nav-link:hover, .nea-subtabs-nav .nea-subtab-btn:hover {
+  background: #dbe6f7; transform: translateY(-1px); color: #0d47a1;
+}
+.sub-tabs-nav .nav-link.active, .nea-subtabs-nav .nea-subtab-btn.active {
+  color: #fff !important; background: linear-gradient(135deg, #00897b 0%, #00695c 100%) !important;
+  border-color: transparent !important; box-shadow: 0 2px 7px rgba(0,105,92,0.4);
+}
+.nea-subtabs-nav { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.nea-subtabs-nav .nea-subtab-btn { cursor: pointer; border: 1px solid transparent; }
 """
 CLOCK_JS = """
 <script>
@@ -759,7 +793,6 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Tab(label="📜 License Status", tab_id="license_status"),
         dbc.Tab(label="📈 License Insights", tab_id="license_insights"),
         dbc.Tab(label="🗺️ GIS Map", tab_id="gis"),
-        dbc.Tab(label="🗂️ Data Table", tab_id="table"),
         dbc.Tab(label="🏭 System Operational Performance", tab_id="nea_operational"),
         dbc.Tab(label="🔬 NEA Forecast Lab", tab_id="nea_forecast"),
         dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
@@ -769,7 +802,7 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Col(id="filter-sidebar-col", md=3,
                 children=[sidebar(), html.Div(className="mt-3"), settings_panel()]),
         dbc.Col(id="main-content-col", md=9, children=[
-            dbc.Row(id="kpi-row", className="g-3 mb-3"),
+            html.Div(id="kpi-row", className="mb-3"),
             html.Div(id="tab-content"),
         ]),
     ]),
@@ -1004,17 +1037,21 @@ def update_kpis(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_ye
 
     cards = [
         # REQ 7: Installed Capacity first
-        kpi_card("Installed Capacity", f"{op_mw:,.1f} MW",
+        kpi_card_compact("Installed Capacity", f"{op_mw:,.1f} MW",
                   f"{op_n:,} Operating Plants", "#2e7d32"),
-        kpi_card("Active Power Plants", f"{n_plants:,} Projects",
+        kpi_card_compact("Active Power Plants", f"{n_plants:,} Projects",
                   f"{plant_mw:,.1f} MW Total • {n_operating:,} operating", "#1565c0"),
-        kpi_card("Transmission Lines", f"{n_tx:,} Projects",
+        kpi_card_compact("Transmission Lines", f"{n_tx:,} Projects",
                   f"{tx_mw:,.1f} MW • {tx_km:,.1f} km circuit length", "#6a1b9a"),
     ]
-    cols = [dbc.Col(c, md=4, lg=4) for c in cards]
-    nea_cards = nea_kpi_cards()
-    cols += [dbc.Col(c, md=4, lg=2, xl=2) for c in nea_cards]
-    return cols
+    cards += nea_kpi_cards()
+    # REQ 2: all KPIs (license + NEA) share one flex row that shrinks each
+    # card evenly to fit, instead of a 12-col grid that wraps NEA cards
+    # onto a second line once more than a handful of cards are present.
+    return html.Div(
+        [html.Div(c, className="kpi-flex-item") for c in cards],
+        className="kpi-flex-row",
+    )
 
 
 @app.callback(
@@ -1067,7 +1104,7 @@ def license_status_shell():
     callback keyed on the sub-tabs' own active_tab (see below) — this
     just lays out the sub-nav + an empty content slot."""
     return html.Div([
-        dbc.Tabs(id="license-status-subtabs", active_tab="plants", className="mb-3", children=[
+        dbc.Tabs(id="license-status-subtabs", active_tab="plants", className="sub-tabs-nav mb-3", children=[
             dbc.Tab(label="⚡ Power Plants", tab_id="plants"),
             dbc.Tab(label="🔌 Transmission Line", tab_id="transmission"),
             dbc.Tab(label="📋 GoN Studied Projects", tab_id="gon_study"),
@@ -1078,11 +1115,12 @@ def license_status_shell():
 
 
 def license_insights_shell():
-    """Growth Trends + Comparative Charts, merged the same way."""
+    """Growth Trends + Comparative Charts + Data Table, merged the same way."""
     return html.Div([
-        dbc.Tabs(id="license-insights-subtabs", active_tab="growth", className="mb-3", children=[
+        dbc.Tabs(id="license-insights-subtabs", active_tab="growth", className="sub-tabs-nav mb-3", children=[
             dbc.Tab(label="📈 Growth Trends", tab_id="growth"),
             dbc.Tab(label="📉 Comparative Charts", tab_id="compare"),
+            dbc.Tab(label="🗂️ Data Table", tab_id="table"),
         ]),
         dcc.Loading(html.Div(id="license-insights-content")),
     ])
@@ -1281,10 +1319,11 @@ def render_license_status_subtab(subtab, f_type, f_status, f_province, f_capacit
     Input("f-date-from", "value"), Input("f-date-to", "value"),
     Input("f-cod-from", "value"), Input("f-cod-to", "value"),
     Input("f-district", "value"), Input("f-local", "value"),
+    Input("f-crs", "value"),
 )
 def render_license_insights_subtab(subtab, f_type, f_status, f_province, f_capacity, f_tx_length, f_year,
                                     f_search, f_date_from, f_date_to, f_cod_from, f_cod_to,
-                                    f_district, f_local):
+                                    f_district, f_local, f_crs):
     loader = STATE["loader"]
     if loader is None or loader.error or not loader.records:
         return dbc.Alert("No project data is loaded yet.", color="info", className="mt-2")
@@ -1299,6 +1338,11 @@ def render_license_insights_subtab(subtab, f_type, f_status, f_province, f_capac
             return render_growth(loader, active_recs)
         elif subtab == "compare":
             return render_compare(loader, active_recs)
+        elif subtab == "table":
+            # Data Table intentionally uses `recs` (not active_recs) — same as
+            # its old standalone main-tab behaviour, so cancelled/GoN-study
+            # rows still show up in the table view.
+            return render_table(recs, f_crs or ct.CRS_WGS84)
         return html.Div()
     except Exception:
         tb = traceback.format_exc()
@@ -2475,7 +2519,7 @@ def render_plants_tab(loader, recs):
         ),
     ])
 
-    return dbc.Tabs(id="plants-subtabs", active_tab="stage", children=[
+    return dbc.Tabs(id="plants-subtabs", active_tab="stage", className="sub-tabs-nav", children=[
         dbc.Tab(stage_section, label="License Stage", tab_id="stage",
                 tab_style={"marginTop": "10px"}),
         dbc.Tab(province_slide_section,
@@ -2686,7 +2730,7 @@ def render_transmission_tab(loader, recs):
 
     return html.Div([
         kpis,
-        dbc.Tabs(id="tx-subtabs", active_tab="stage", children=[
+        dbc.Tabs(id="tx-subtabs", active_tab="stage", className="sub-tabs-nav", children=[
             dbc.Tab(stage_section, label="License Stage", tab_id="stage",
                     tab_style={"marginTop": "10px"}),
             dbc.Tab(volt_section, label="By Voltage Class", tab_id="by-voltage",
@@ -3030,7 +3074,7 @@ def render_compare(loader, recs):
     fig_volt = _apply_secondary_axis_setting(fig_volt)
     add_watermark(fig_volt)
 
-    return dbc.Tabs(id="compare-subtabs", active_tab="plants", children=[
+    return dbc.Tabs(id="compare-subtabs", active_tab="plants", className="sub-tabs-nav", children=[
         dbc.Tab(dcc.Graph(figure=fig_plants), label="Power Plants", tab_id="plants",
                 tab_style={"marginTop": "10px"}),
         dbc.Tab(dcc.Graph(figure=fig_lines), label="Transmission Lines", tab_id="lines",
