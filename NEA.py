@@ -812,18 +812,7 @@ def render_dashboard_html() -> str:
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         template = f.read()
     data_json = json.dumps(get_dashboard_data())
-    status = sync_status()
-    if status["last_sync"]:
-        badge = f'<i class="fas fa-satellite-dish"></i> {status["source"]} · synced {status["last_sync"]}'
-    elif status["error"]:
-        # A sync was attempted and failed, and there is no bundled fallback
-        # to fall back to — surface the real reason here so an admin can
-        # diagnose it from the page itself, not just Render's logs.
-        safe_err = str(status["error"]).replace("<", "&lt;").replace(">", "&gt;")
-        badge = (f'<i class="fas fa-triangle-exclamation"></i> NEA sync failed: {safe_err}')
-    else:
-        badge = '<i class="fas fa-triangle-exclamation"></i> No sync has completed yet (still starting up, or NEA_SHEET_URL is not set)'
-    html = template.replace("__NEA_DATA_JSON__", data_json).replace("__NEA_SYNC_BADGE__", badge)
+    html = template.replace("__NEA_DATA_JSON__", data_json)
     return html
 def render_forecast_lab_html() -> str:
     """The Forecast Lab page is static HTML/JS — it pulls its parameter
