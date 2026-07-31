@@ -400,6 +400,31 @@ def api_nea_forecast():
         return jsonify(error=str(e)), 400
 
 
+@server.route("/api/nea-forecast-composite-params")
+def api_nea_forecast_composite_params():
+    from flask import jsonify
+    try:
+        return jsonify(NEA.composite_param_choices())
+    except Exception as e:
+        return jsonify([]), 200
+
+
+@server.route("/api/nea-forecast-composite", methods=["POST"])
+def api_nea_forecast_composite():
+    from flask import jsonify, request
+    try:
+        body = request.get_json(force=True) or {}
+        result = NEA.run_composite_forecast(
+            composite_key=body.get("composite_key"),
+            model=body.get("model", "linear"),
+            n_ahead=body.get("n_ahead", 5),
+        )
+        return jsonify(result)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=str(e)), 400
+
+
 @server.route("/api/visitor-count")
 def api_visitor_count():
     from flask import jsonify, session as flask_session
