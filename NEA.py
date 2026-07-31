@@ -925,35 +925,98 @@ MODEL_CHOICES_MONTHLY = MODEL_CHOICES_ANNUAL + [
 ]
 
 
+def _fit_metrics(actual, fitted) -> dict:
+    """R² / RMSE / MAE / MAPE between the historical series and each
+    model's in-sample fitted values. `fitted` may contain None/NaN for
+    warm-up periods (e.g. ARIMA's differencing order, a moving-average
+    window) — those points are dropped, matching the original demo's
+    calcMetrics() behaviour, not treated as zero-error."""
+    pairs = []
+    for a, f in zip(actual, fitted):
+        if f is None or a is None:
+            continue
+        try:
+            fv = float(f)
+        except (TypeError, ValueError):
+            continue
+        if np.isnan(fv):
+            continue
+        pairs.append((float(a), fv))
+    if len(pairs) < 2:
+        return {"r2": None, "rmse": None, "mae": None, "mape": None}
+    a = np.array([p[0] for p in pairs])
+    f = np.array([p[1] for p in pairs])
+    resid = a - f
+    ss_res = float(np.sum(resid ** 2))
+    ss_tot = float(np.sum((a - a.mean()) ** 2))
+    r2 = None if ss_tot == 0 else round(1 - ss_res / ss_tot, 4)
+    rmse = round(float(np.sqrt(ss_res / len(a))), 4)
+    mae = round(float(np.mean(np.abs(resid))), 4)
+    nz = a != 0
+    mape = round(float(np.mean(np.abs(resid[nz] / a[nz]))) * 100, 2) if nz.any() else None
+    return {"r2": r2, "rmse": rmse, "mae": mae, "mape": mape}
+
+
+def _clean_series(raw_vals):
+    """Trim a component series to its first..last non-None span and
+    linearly interpolate any internal gaps, so a category column with a
+    blank cell or two (common in a hand-maintained sheet) still gets a
+    clean numeric array to forecast on. Returns (values, (first_idx,
+    last_idx)) against the ORIGINAL indices, or (None, None) if there's
+    not enough real data (fewer than 3 usable points) to fit anything."""
+    n = len(raw_vals)
+    first = next((i for i in range(n) if raw_vals[i] is not None), None)
+    last = next((i for i in range(n - 1, -1, -1) if raw_vals[i] is not None), None)
+    if first is None or last is None or (last - first) < 2:
+        return None, None
+    vals = [float(v) if v is not None else None for v in raw_vals[first:last + 1]]
+    for i, v in enumerate(vals):
+        if v is None:
+            prev_i = max(j for j in range(i - 1, -1, -1) if vals[j] is not None)
+            next_i = min(j for j in range(i + 1, len(vals)) if vals[j] is not None)
+            frac = (i - prev_i) / (next_i - prev_i)
+            vals[i] = vals[prev_i] + frac * (vals[next_i] - vals[prev_i])
+    return vals, (first, last)
+
+
 def _linear_forecast(x_hist, y_hist, n_ahead):
     x = np.asarray(x_hist, dtype=float)
     y = np.asarray(y_hist, dtype=float)
     slope, intercept = np.polyfit(x, y, 1)
     last_x = x[-1]
-    return [float(slope * (last_x + i) + intercept) for i in range(1, n_ahead + 1)], \
-        {"model": "Linear Regression", "slope": round(float(slope), 4), "intercept": round(float(intercept), 2)}
+    fitted = [float(slope * xi + intercept) for xi in x]
+    pred = [float(slope * (last_x + i) + intercept) for i in range(1, n_ahead + 1)]
+    return pred, \
+        {"model": "Linear Regression", "slope": round(float(slope), 4), "intercept": round(float(intercept), 2)}, \
+        fitted
 
 
 def _moving_avg_forecast(y_hist, n_ahead, window=3):
     y = list(y_hist)
     window = min(window, len(y))
+    fitted = [float(sum(y[max(0, i - window + 1):i + 1]) / len(y[max(0, i - window + 1):i + 1]))
+              for i in range(len(y))]
     ma = sum(y[-window:]) / window
     trend = 0.0
     if len(y) >= window + 1:
         prev_ma = sum(y[-window - 1:-1]) / window
         trend = ma - prev_ma
-    return [float(ma + trend * i) for i in range(1, n_ahead + 1)], \
-        {"model": f"Moving Average ({window}-period)", "last_ma": round(ma, 2), "trend_per_step": round(trend, 2)}
+    pred = [float(ma + trend * i) for i in range(1, n_ahead + 1)]
+    return pred, \
+        {"model": f"Moving Average ({window}-period)", "last_ma": round(ma, 2), "trend_per_step": round(trend, 2)}, \
+        fitted
 
 
 def _holt_forecast(y_hist, n_ahead):
     y = pd.Series(y_hist, dtype=float)
     fit = Holt(y, initialization_method="estimated").fit(optimized=True)
     fc = fit.forecast(n_ahead)
+    fitted = [float(v) for v in fit.fittedvalues.values]
     return [float(v) for v in fc.values], \
         {"model": "Holt Exponential Smoothing",
          "alpha": round(float(fit.params["smoothing_level"]), 3),
-         "beta": round(float(fit.params["smoothing_trend"]), 3)}
+         "beta": round(float(fit.params["smoothing_trend"]), 3)}, \
+        fitted
 
 
 def _best_arima(y_hist, max_p=2, max_d=1, max_q=2):
@@ -981,7 +1044,8 @@ def _arima_forecast(y_hist, n_ahead):
     ci = fc.conf_int(alpha=0.20)
     lo = [float(v) for v in ci.iloc[:, 0].values]
     hi = [float(v) for v in ci.iloc[:, 1].values]
-    return mean, {"model": f"ARIMA{order}", "aic": round(float(aic), 2)}, lo, hi
+    fitted = [float(v) if not np.isnan(v) else None for v in fit.fittedvalues.values]
+    return mean, {"model": f"ARIMA{order}", "aic": round(float(aic), 2)}, lo, hi, fitted
 
 
 def _sarima_forecast(y_hist, n_ahead, season_length=12):
@@ -1009,16 +1073,25 @@ def _sarima_forecast(y_hist, n_ahead, season_length=12):
     lo = [float(v) for v in ci.iloc[:, 0].values]
     hi = [float(v) for v in ci.iloc[:, 1].values]
     order, sorder = best_spec
-    return mean, {"model": f"SARIMA{order}x{sorder}", "aic": round(float(best_aic), 2)}, lo, hi
+    fitted = [float(v) if not np.isnan(v) else None for v in best_fit.fittedvalues.values]
+    return mean, {"model": f"SARIMA{order}x{sorder}", "aic": round(float(best_aic), 2)}, lo, hi, fitted
 
 
 def _hybrid_forecast(x_hist, y_hist, n_ahead):
-    lin_vals, lin_meta = _linear_forecast(x_hist, y_hist, n_ahead)
-    ar_vals, ar_meta, lo, hi = _arima_forecast(y_hist, n_ahead)
+    lin_vals, lin_meta, lin_fitted = _linear_forecast(x_hist, y_hist, n_ahead)
+    ar_vals, ar_meta, lo, hi, ar_fitted = _arima_forecast(y_hist, n_ahead)
     blended = [float((a + b) / 2) for a, b in zip(lin_vals, ar_vals)]
+    fitted = []
+    for a, b in zip(lin_fitted, ar_fitted):
+        if a is not None and b is not None:
+            fitted.append(float((a + b) / 2))
+        elif a is not None:
+            fitted.append(float(a))
+        else:
+            fitted.append(b)
     meta = {"model": f"Hybrid (Linear + {ar_meta['model']}, averaged)",
             "linear_slope": lin_meta["slope"], "arima_aic": ar_meta["aic"]}
-    return blended, meta
+    return blended, meta, fitted
 
 
 @dataclass
@@ -1034,6 +1107,34 @@ class ForecastResult:
     meta: dict = field(default_factory=dict)
 
 
+def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, season_length: int = 12):
+    """Shared dispatcher used by both run_forecast() (single series) and
+    run_composite_forecast() (per-component series inside a stacked
+    group), so every parameter — whether it's charted on its own or as
+    one slice of a stack — goes through the exact same statsmodels
+    fitting code. Returns (pred, meta, lo, hi, fitted); lo/hi are []
+    for models that don't produce a confidence interval."""
+    lo, hi = [], []
+    if model == "linear":
+        pred, meta, fitted = _linear_forecast(x_hist, values, n_ahead)
+    elif model == "moving":
+        pred, meta, fitted = _moving_avg_forecast(values, n_ahead)
+    elif model == "holt":
+        pred, meta, fitted = _holt_forecast(values, n_ahead)
+    elif model == "arima":
+        pred, meta, lo, hi, fitted = _arima_forecast(values, n_ahead)
+    elif model == "sarima":
+        if not monthly:
+            raise ValueError("SARIMA is only offered for the monthly (seasonal) series — "
+                              "the annual series are too short and non-seasonal for it to mean anything.")
+        pred, meta, lo, hi, fitted = _sarima_forecast(values, n_ahead, season_length)
+    elif model == "hybrid":
+        pred, meta, fitted = _hybrid_forecast(x_hist, values, n_ahead)
+    else:
+        raise ValueError(f"Unknown model {model!r}")
+    return pred, meta, lo, hi, fitted
+
+
 def run_forecast(param_key: str, model: str, n_ahead: int, monthly: bool = False) -> ForecastResult:
     if not get_dashboard_data():
         raise ValueError("No NEA operational data has synced yet — check that the Google "
@@ -1046,6 +1147,7 @@ def run_forecast(param_key: str, model: str, n_ahead: int, monthly: bool = False
         values = series["values"]
         pred_labels = [f"+{i} mo" for i in range(1, n_ahead + 1)]
         x_hist = list(range(len(values)))
+        season_length = series.get("season_length", 12)
     else:
         series = _annual_series_from_cache()[param_key]
         values = series["values"]
@@ -1058,25 +1160,10 @@ def run_forecast(param_key: str, model: str, n_ahead: int, monthly: bool = False
             labels = series["fy_labels"]
             pred_labels = [f"FY+{i}" for i in range(1, n_ahead + 1)]
             x_hist = list(range(len(labels)))
+        season_length = 12
 
-    lo, hi = [], []
-    if model == "linear":
-        pred, meta = _linear_forecast(x_hist, values, n_ahead)
-    elif model == "moving":
-        pred, meta = _moving_avg_forecast(values, n_ahead)
-    elif model == "holt":
-        pred, meta = _holt_forecast(values, n_ahead)
-    elif model == "arima":
-        pred, meta, lo, hi = _arima_forecast(values, n_ahead)
-    elif model == "sarima":
-        if not monthly:
-            raise ValueError("SARIMA is only offered for the monthly (seasonal) series — "
-                              "the annual series are too short and non-seasonal for it to mean anything.")
-        pred, meta, lo, hi = _sarima_forecast(values, n_ahead, series.get("season_length", 12))
-    elif model == "hybrid":
-        pred, meta = _hybrid_forecast(x_hist, values, n_ahead)
-    else:
-        raise ValueError(f"Unknown model {model!r}")
+    pred, meta, lo, hi, fitted = _run_single_model(model, x_hist, values, n_ahead, monthly, season_length)
+    meta = {**meta, **_fit_metrics(values, fitted)}
 
     return ForecastResult(
         past_labels=labels, past_values=[float(v) for v in values],
@@ -1084,6 +1171,207 @@ def run_forecast(param_key: str, model: str, n_ahead: int, monthly: bool = False
         pred_labels=pred_labels, pred_values=pred,
         pred_lo=lo, pred_hi=hi, meta=meta,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  COMPOSITE (STACKED / MULTI-COMPONENT) FORECASTING
+#
+#  For a parameter that's really made of several categories that sum
+#  to a total — Consumers by Category, Revenue by Consumer Category,
+#  the annual Generation Mix (NEA Own / NEA Subsidiary / IPP / India
+#  Import), and the monthly Energy Mix — the Forecast Lab shouldn't
+#  just forecast the aggregate as one line. It forecasts EACH component
+#  series independently (own model fit, own confidence band, own
+#  accuracy stats) and then stacks the forecasted components, so the
+#  final "scenario" is a real stacked chart, not a single blended line.
+# ══════════════════════════════════════════════════════════════════════
+
+def _annual_composite_defs() -> dict:
+    """Stack-able annual parameter groups, sourced from the same live
+    cache as _annual_series_from_cache(). Component keys/labels for the
+    consumer and revenue breakdowns are discovered dynamically from
+    whatever category columns are actually in the sheet, so a renamed
+    or newly added category (e.g. a new "Irrigation" consumer class)
+    shows up automatically — nothing here is hardcoded to today's
+    column headers except the four fixed Generation Mix sources."""
+    d = get_dashboard_data()
+    ae, cg, sr = d.get("annualEnergy", {}), d.get("consumers", {}), d.get("sales", {})
+    out = {}
+
+    gen_components = []
+    for key, label in (("nea_own", "NEA Own"), ("nea_sub", "NEA Subsidiary"),
+                        ("ipp", "IPP"), ("india", "India Import")):
+        vals = ae.get(key)
+        if vals and any(v is not None for v in vals):
+            gen_components.append({"key": key, "label": label, "values": vals})
+    if gen_components and ae.get("years"):
+        out["generationMixAnnual"] = {
+            "label": "Generation Mix — Annual", "unit": "MU", "monthly": False,
+            "years": [int(y) for y in ae["years"]], "components": gen_components,
+            "reported_total": ae.get("total", []),
+        }
+
+    if cg.get("years") and cg.get("categories"):
+        cons_components = [{"key": _slug(k) or f"cat{i}", "label": k, "values": v}
+                            for i, (k, v) in enumerate(cg["categories"].items())
+                            if v and any(x is not None for x in v)]
+        if cons_components:
+            out["consumersByCategory"] = {
+                "label": "Consumers by Category", "unit": "consumers", "monthly": False,
+                "years": [int(y) for y in cg["years"]], "components": cons_components,
+                "reported_total": cg.get("total", []),
+            }
+
+    if sr.get("years") and sr.get("categories"):
+        rev_components = [{"key": _slug(k) or f"cat{i}", "label": k, "values": v}
+                           for i, (k, v) in enumerate(sr["categories"].items())
+                           if v and any(x is not None for x in v)]
+        if rev_components:
+            out["revenueByCategory"] = {
+                "label": "Revenue by Consumer Category", "unit": "Rs. Million", "monthly": False,
+                "years": [int(y) for y in sr["years"]], "components": rev_components,
+                "reported_total": sr.get("total", []),
+            }
+
+    return out
+
+
+def _monthly_composite_defs() -> dict:
+    """The one stack-able monthly group: the generation-source mix
+    (IPP / NEA Subsidiary / NEA ROR-PROR / NEA Storage / NEA Solar /
+    Thermal / Import) behind the monthly Energy Balance sheet, flattened
+    across every fiscal year the same way _monthly_series_from_cache()
+    flattens the single system-demand series, so it lines up with the
+    same SARIMA(season=12) treatment."""
+    d = get_dashboard_data()
+    eb = d.get("energyBalanceMonthly", {})
+    fy_order = sorted(eb.keys())
+    comp_defs = [("ipp", "IPP"), ("nea_sub", "NEA Subsidiary"), ("nea_ror", "NEA ROR/PROR"),
+                 ("nea_storage", "NEA Storage"), ("nea_solar", "NEA Solar"),
+                 ("thermal", "Thermal"), ("import", "Import")]
+    labels, comp_vals, reported_total = [], {k: [] for k, _ in comp_defs}, []
+    for fy in fy_order:
+        entry = eb[fy]
+        months = entry.get("months", _MONTHS_BS)
+        demand = entry.get("system_demand", [])
+        for i in range(len(months)):
+            labels.append(f"{fy} {months[i]}")
+            for k, _ in comp_defs:
+                series = entry.get(k, [])
+                comp_vals[k].append(series[i] if i < len(series) else None)
+            reported_total.append(demand[i] if i < len(demand) else None)
+
+    components = [{"key": k, "label": lbl, "values": comp_vals[k]}
+                  for k, lbl in comp_defs if any(v is not None for v in comp_vals[k])]
+    out = {}
+    if components and labels:
+        out["energyMixMonthly"] = {
+            "label": "Monthly Energy Mix (Generation Sources)", "unit": "GWh", "monthly": True,
+            "labels": labels, "components": components, "reported_total": reported_total,
+            "season_length": 12,
+        }
+    return out
+
+
+def composite_param_choices():
+    """Dropdown-ready list of every stack-able (composite) parameter,
+    parallel to forecast_param_choices() for single series."""
+    annual = [{"label": v["label"], "value": k, "monthly": False, "unit": v["unit"]}
+              for k, v in _annual_composite_defs().items()]
+    monthly = [{"label": v["label"], "value": k, "monthly": True, "unit": v["unit"]}
+               for k, v in _monthly_composite_defs().items()]
+    return annual + monthly
+
+
+def run_composite_forecast(composite_key: str, model: str, n_ahead: int) -> dict:
+    """Forecast every component of a stacked group independently, then
+    sum the forecasted components period-by-period to build the final
+    stacked scenario. Returns a JSON-friendly dict (not a dataclass,
+    since the shape — a list of components plus one aggregate — doesn't
+    fit ForecastResult)."""
+    if not get_dashboard_data():
+        raise ValueError("No NEA operational data has synced yet — check that the Google "
+                          "Sheet is shared as \"Anyone with the link\" and that a live sync "
+                          "or bundled fallback has completed at least once.")
+    n_ahead = max(1, min(int(n_ahead), 20))
+
+    annual_defs = _annual_composite_defs()
+    monthly_defs = _monthly_composite_defs()
+    if composite_key in annual_defs:
+        cdef = annual_defs[composite_key]
+        monthly = False
+        years = cdef["years"]
+        past_labels = [str(y) for y in years]
+        pred_labels = [str(years[-1] + i) for i in range(1, n_ahead + 1)]
+        season_length = 12
+    elif composite_key in monthly_defs:
+        cdef = monthly_defs[composite_key]
+        monthly = True
+        past_labels = cdef["labels"]
+        pred_labels = [f"+{i} mo" for i in range(1, n_ahead + 1)]
+        season_length = cdef.get("season_length", 12)
+    else:
+        raise ValueError(f"Unknown composite parameter {composite_key!r}")
+
+    if model == "sarima" and not monthly:
+        raise ValueError("SARIMA is only offered for monthly composite parameters.")
+
+    components_out = []
+    agg_pred = [0.0] * n_ahead
+    agg_lo = [0.0] * n_ahead
+    agg_hi = [0.0] * n_ahead
+    have_ci = False
+
+    for comp in cdef["components"]:
+        raw_vals = comp["values"]
+        vals, span = _clean_series(raw_vals)
+        if vals is None or len(vals) < 3:
+            continue  # not enough real data points to fit this component
+        first, _last = span
+        this_x = ([years[first + i] for i in range(len(vals))] if not monthly
+                   else list(range(len(vals))))
+        try:
+            pred, meta, lo, hi, fitted = _run_single_model(model, this_x, vals, n_ahead, monthly, season_length)
+        except Exception as exc:
+            # one bad component (e.g. too short for the chosen model)
+            # shouldn't blank out the whole stack — skip it and keep going
+            components_out.append({
+                "key": comp["key"], "label": comp["label"],
+                "past_values": [float(v) if v is not None else None for v in raw_vals],
+                "pred_values": [], "pred_lo": [], "pred_hi": [],
+                "meta": {"model": model, "error": str(exc)},
+            })
+            continue
+        meta = {**meta, **_fit_metrics(vals, fitted)}
+        if lo and hi:
+            have_ci = True
+        components_out.append({
+            "key": comp["key"], "label": comp["label"],
+            "past_values": [float(v) if v is not None else None for v in raw_vals],
+            "pred_values": [float(v) for v in pred],
+            "pred_lo": [float(v) for v in lo] if lo else [],
+            "pred_hi": [float(v) for v in hi] if hi else [],
+            "meta": meta,
+        })
+        for i in range(n_ahead):
+            agg_pred[i] += pred[i]
+            if lo and hi:
+                agg_lo[i] += lo[i]
+                agg_hi[i] += hi[i]
+
+    reported_total = cdef.get("reported_total") or []
+    return {
+        "key": composite_key, "label": cdef["label"], "unit": cdef["unit"], "monthly": monthly,
+        "past_labels": past_labels, "pred_labels": pred_labels,
+        "components": components_out,
+        "aggregate": {
+            "label": f"{cdef['label']} — Total (sum of forecasted components)",
+            "pred_values": agg_pred,
+            "pred_lo": agg_lo if have_ci else [],
+            "pred_hi": agg_hi if have_ci else [],
+            "reported_past_values": [float(v) if v is not None else None for v in reported_total],
+        },
+    }
 
 
 def unit_economics():
