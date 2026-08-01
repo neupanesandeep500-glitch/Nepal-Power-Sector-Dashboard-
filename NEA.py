@@ -1507,6 +1507,14 @@ def run_composite_forecast(composite_key: str, model: str, n_ahead: int) -> dict
     agg_pred = [0.0] * n_ahead
     agg_lo = [0.0] * n_ahead
     agg_hi = [0.0] * n_ahead
+    agg_base = 0.0  # sum of each fitted component's own last actual value —
+    # this is what agg_pred[0] is anchored to (see _run_single_model's
+    # CONTINUITY CORRECTION), so bridging history→forecast with agg_base
+    # instead of the separately-reported Total column guarantees the join
+    # is exactly continuous, even when the reported Total doesn't equal
+    # the raw sum of these specific components (different definition/
+    # rounding/an extra source not broken out here) — that mismatch is
+    # exactly what was causing a visible spike at the seam.
     have_ci = False
 
     for comp in cdef["components"]:
@@ -1532,6 +1540,7 @@ def run_composite_forecast(composite_key: str, model: str, n_ahead: int) -> dict
         meta = {**meta, **_fit_metrics(vals, fitted)}
         if lo and hi:
             have_ci = True
+        agg_base += float(vals[-1])
         components_out.append({
             "key": comp["key"], "label": comp["label"],
             "past_values": [float(v) if v is not None else None for v in raw_vals],
@@ -1553,6 +1562,7 @@ def run_composite_forecast(composite_key: str, model: str, n_ahead: int) -> dict
         "components": components_out,
         "aggregate": {
             "label": f"{cdef['label']} — Total (sum of forecasted components)",
+            "base_value": agg_base,
             "pred_values": agg_pred,
             "pred_lo": agg_lo if have_ci else [],
             "pred_hi": agg_hi if have_ci else [],
