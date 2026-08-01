@@ -189,7 +189,7 @@ def get_type_colors():
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
-    title="Nepal Power Plant & Transmission License Status",
+    title="Nepal Power Sector Dashboard",
     suppress_callback_exceptions=True,
 )
 server = app.server
@@ -775,7 +775,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.Div([
                     html.Div("Nepal Power Plant and Transmission Line License Status Dashboard",
                               className="site-header-title"),
-                    html.Div("Source: www.doed.gov.np | Licensing pipeline overview",
+                    html.Div("Source: www.doed.gov.np and www.nea.org.np | Licensing Pipeline and System Performance Overview",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
@@ -794,7 +794,7 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Tab(label="📈 License Insights", tab_id="license_insights"),
         dbc.Tab(label="🗺️ GIS Map", tab_id="gis"),
         dbc.Tab(label="🏭 System Operational Performance", tab_id="nea_operational"),
-        dbc.Tab(label="🔬 NEA Forecast Lab", tab_id="nea_forecast"),
+        dbc.Tab(label="🔬 Forecast Lab", tab_id="nea_forecast"),
         dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
     ]),
 
