@@ -1229,25 +1229,29 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
     an error or a wild spike. meta['requested_model'] /
     meta['fallback_used'] record when this happened.
 
-    CONTINUITY CORRECTION: Holt/ARIMA/SARIMA forecast forward from
-    their own internal smoothed level, not from the raw last actual
-    observation. When that internal level doesn't exactly match the
-    last real data point (e.g. a volatile last year), the forecast
-    trajectory is still internally consistent, but the *chart* — which
-    draws the raw history line up to the real base value and then
-    starts the forecast line — shows an artificial jump right at the
-    forecast start, even though nothing is actually wrong with the
-    model. Each candidate is anchored to the last real observation by
-    shifting every predicted (and CI) point by the model's own last
-    in-sample residual, so the forecast line always leaves from
-    exactly where the history line ends. This shift is applied BEFORE
-    the spike check, not after — a model can look smooth in its own
-    internal reference frame yet still need a large shift to line up
-    with reality, and that shift lands entirely on the first forecast
-    step, which is exactly the join the chart draws. Checking only the
-    raw, pre-shift forecast let that shift through unvalidated, which
-    is what produced a year-1 spike that then settled back down: the
-    candidate passed the check before its correction, not after."""
+    CONTINUITY CORRECTION: every forecast is anchored so its FIRST
+    predicted point equals the last real observation exactly — this is
+    what actually gets drawn on the chart (history line ends at
+    last_actual, forecast line starts at pred[0]), so that's the join
+    that must be continuous. Earlier this anchored to the model's
+    internal fitted level instead (fit.fittedvalues[-1]), which only
+    guarantees the SHAPE of the forecast lines up with the model's own
+    smoothed trajectory — it does nothing to bound the jump from
+    last_actual to pred[0] specifically. A model whose one-step-ahead
+    delta is large (common for ARIMA/Hybrid on a short or volatile
+    series) could pass that old anchor and still leave a big visible
+    spike at the seam, and when several such components are summed in
+    a stacked/composite chart those individually-"reasonable" jumps
+    compound into a much larger spike on the total line. Anchoring to
+    pred[0] instead removes the seam entirely — every candidate's
+    forecast line starts exactly where the history line ends, by
+    construction, not just approximately. The offset is still a single
+    constant shift applied to every predicted (and CI) point, so the
+    model's own shape/trend beyond the first step is fully preserved —
+    only WHERE the curve starts changes, not how it moves after that.
+    This shift is applied BEFORE the spike check, not after — a
+    candidate needs to look reasonable in the same frame that will
+    actually be plotted."""
     chain = [model] + [m for m in _MODEL_FALLBACK_CHAIN if m != model]
     pred = meta = fitted = None
     lo, hi = [], []
@@ -1261,11 +1265,14 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
             last_err = e
             continue
 
-        # Anchor this candidate to the last real observation first...
-        last_fitted = cand_fitted[-1] if cand_fitted else None
-        if last_actual is not None and last_fitted is not None:
+        # Anchor this candidate to the last real observation first —
+        # force pred[0] to equal last_actual EXACTLY, so the chart's
+        # history→forecast join is always continuous, regardless of how
+        # far the model's own internal level/one-step delta had drifted
+        # from the raw last observation.
+        if last_actual is not None and cand_pred:
             try:
-                offset = float(last_actual) - float(last_fitted)
+                offset = float(last_actual) - float(cand_pred[0])
             except (TypeError, ValueError):
                 offset = 0.0
             if offset:
