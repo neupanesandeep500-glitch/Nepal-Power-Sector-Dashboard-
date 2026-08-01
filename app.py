@@ -126,6 +126,30 @@ COLOR_SCHEMES = {
     },
 }
 
+GENERIC_NEA_PALETTE = {
+    "default": ["#1565c0", "#c62828", "#2e7d32", "#f9a825", "#6a1b9a", "#00897b", "#ff8f00", "#8e24aa"],
+    "pastel":  ["#64b5f6", "#e57373", "#81c784", "#fff176", "#ba68c8", "#4db6ac", "#ffcc80", "#ce93d8"],
+    "dark":    ["#1565c0", "#b71c1c", "#1b5e20", "#e65100", "#4a148c", "#004d40", "#bf360c", "#311b92"],
+    "vibrant": ["#2979ff", "#ff1744", "#00e676", "#ffea00", "#d500f9", "#1de9b6", "#ff9100", "#651fff"],
+}
+
+
+def _nea_style_payload():
+    """Current Custom Style settings, translated into what the NEA
+    pages' Chart.js code understands — those pages are static HTML
+    (not Plotly/Dash components), so style can't flow through props;
+    it's passed as a small JSON blob baked into the page instead."""
+    s = CHART_STYLE_STATE
+    return {
+        "font_family": s.get("font_family", "Arial"),
+        "title_size": s.get("title_size", 16),
+        "label_size": s.get("label_size", 12),
+        "show_grid": bool(s.get("show_grid", True)),
+        "animation": bool(s.get("animation", True)),
+        "palette": GENERIC_NEA_PALETTE.get(s.get("color_scheme", "default"), GENERIC_NEA_PALETTE["default"]),
+    }
+
+
 PROVINCE_COLOR_SCHEMES = {
     "default": {
         "Koshi": "#00695c", "Madhesh": "#ef6c00", "Bagmati": "#1565c0",
@@ -393,7 +417,7 @@ def serve_nea_vendor(filename):
 @server.route("/nea-operational-dashboard")
 def nea_operational_dashboard():
     try:
-        return NEA.render_dashboard_html()
+        return NEA.render_dashboard_html(style=_nea_style_payload())
     except Exception as e:
         traceback.print_exc()
         return f"<pre>NEA dashboard failed to render: {e}</pre>", 500
@@ -402,7 +426,7 @@ def nea_operational_dashboard():
 @server.route("/nea-forecast-lab")
 def nea_forecast_lab_page():
     try:
-        return NEA.render_forecast_lab_html()
+        return NEA.render_forecast_lab_html(style=_nea_style_payload())
     except Exception as e:
         traceback.print_exc()
         return f"<pre>NEA forecast lab failed to render: {e}</pre>", 500
@@ -413,7 +437,8 @@ def api_nea_forecast_params():
     from flask import jsonify
     try:
         return jsonify(NEA.forecast_param_choices())
-    except Exception as e:
+    except Exception:
+        traceback.print_exc()
         return jsonify([]), 200
 
 
@@ -439,7 +464,8 @@ def api_nea_forecast_composite_params():
     from flask import jsonify
     try:
         return jsonify(NEA.composite_param_choices())
-    except Exception as e:
+    except Exception:
+        traceback.print_exc()
         return jsonify([]), 200
 
 
@@ -1175,13 +1201,18 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
     # NEA Operational Data / Forecast Lab: entirely independent of the
     # power-plant licensing loader above (own Google Sheet, own sync) —
     # render them here so a not-yet-loaded power-plant dataset never
-    # blocks these two tabs.
+    # blocks these two tabs. The `v=` query param is a cache-buster tied
+    # to the current Custom Style settings: an iframe with an unchanged
+    # `src` never reloads on its own, so without this, changing Custom
+    # Style while already on one of these tabs would silently do nothing
+    # until the tab was left and reopened.
+    style_v = abs(hash(tuple(sorted(CHART_STYLE_STATE.items())))) % 100000
     if tab == "nea_operational":
-        return (html.Iframe(src="/nea-operational-dashboard",
+        return (html.Iframe(src=f"/nea-operational-dashboard?v={style_v}",
                              style={"width": "100%", "height": "2400px", "border": "none"}),
                 gis_controls_style, sidebar_style, sidebar_md, content_md)
     if tab == "nea_forecast":
-        return (html.Iframe(src="/nea-forecast-lab",
+        return (html.Iframe(src=f"/nea-forecast-lab?v={style_v}",
                              style={"width": "100%", "height": "900px", "border": "none"}),
                 gis_controls_style, sidebar_style, sidebar_md, content_md)
 
