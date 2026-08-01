@@ -1185,14 +1185,10 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
         return dbc.Alert([
             html.Div("No project data is loaded yet.", className="fw-semibold"),
             html.Div([
-                "An administrator needs to connect a data source at ",
-                html.A("/admin", href="/admin/login", className="alert-link"),
-                " — either sync a Google Sheet / Drive link there, or upload a "
-                "workbook directly. If a live Google Sheet is already configured "
-                "in Render's environment variables (DEFAULT_SHEET_URL) and this "
-                "message still shows, check that the sheet is shared as "
-                "\"Anyone with the link\" and that the admin panel's sync "
-                "hasn't failed silently." + detail,
+                "Please check back shortly, or refer to the official DoED records at ",
+                html.A("www.doed.gov.np", href="https://www.doed.gov.np", target="_blank",
+                       className="alert-link"),
+                "." + detail,
             ], className="small mt-1"),
         ], color="info", className="mt-3"), gis_controls_style, sidebar_style, sidebar_md, content_md
 
@@ -1572,6 +1568,76 @@ def _nea_ticker_segments():
                 segs.append((f"💵 {label}: Rs. {vals[-1]:,.2f}/kWh", "#e0e0e0"))
     except Exception:
         pass
+
+    # Top 3 consumer classes by count, with each one's % share of the
+    # latest year's total consumers.
+    cg = data.get("consumers") or {}
+    if cg.get("categories") and cg.get("total"):
+        totals = cg["total"]
+        idx = next((i for i in range(len(totals) - 1, -1, -1) if totals[i]), None)
+        if idx is not None and totals[idx]:
+            grand = totals[idx]
+            rows = sorted(
+                ((name, s[idx]) for name, s in cg["categories"].items() if idx < len(s) and s[idx] is not None),
+                key=lambda kv: -kv[1],
+            )[:3]
+            if rows:
+                parts = " | ".join(f"{name} {v:,.0f} ({v / grand * 100:,.1f}%)" for name, v in rows)
+                segs.append((f"👥 TOP CONSUMER CLASSES: {parts}", "#a5d8ff"))
+
+    # Top revenue-contributing consumer classes, with each one's % share
+    # of the latest year's total revenue collection.
+    sr = data.get("sales") or {}
+    if sr.get("categories") and sr.get("total"):
+        totals = sr["total"]
+        idx = next((i for i in range(len(totals) - 1, -1, -1) if totals[i]), None)
+        if idx is not None and totals[idx]:
+            grand = totals[idx]
+            rows = sorted(
+                ((name, s[idx]) for name, s in sr["categories"].items() if idx < len(s) and s[idx] is not None),
+                key=lambda kv: -kv[1],
+            )[:3]
+            if rows:
+                parts = " | ".join(f"{name} Rs. {v:,.1f} Mn ({v / grand * 100:,.1f}%)" for name, v in rows)
+                segs.append((f"💰 TOP REVENUE CONTRIBUTORS: {parts}", "#ffd6a5"))
+
+    # Generation-source contribution — Energy (summed across the latest
+    # complete fiscal year) and Power (latest month with real data) —
+    # highlighting NEA RoR/PROR, NEA Storage and IPP specifically.
+    src_defs = [("nea_ror", "NEA RoR/PROR"), ("nea_storage", "NEA Storage"), ("ipp", "IPP")]
+    eb = data.get("energyBalanceMonthly") or {}
+    if eb:
+        latest_fy = sorted(eb.keys())[-1]
+        entry = eb[latest_fy]
+        energy_keys = ["ipp", "nea_sub", "nea_ror", "nea_storage", "nea_solar", "thermal", "import"]
+        by_src = {k: sum(v for v in (entry.get(k) or []) if v is not None) for k in energy_keys}
+        grand = sum(by_src.values())
+        if grand:
+            parts = " | ".join(f"{label} {by_src.get(key, 0):,.0f} GWh ({by_src.get(key, 0) / grand * 100:,.1f}%)"
+                                for key, label in src_defs)
+            segs.append((f"⚡ ENERGY MIX ({latest_fy}): {parts}", "#c3f0ca"))
+
+    cb = data.get("capacityBalanceMonthly") or {}
+    if cb:
+        latest_fy = sorted(cb.keys())[-1]
+        entry = cb[latest_fy]
+        months = entry.get("months") or []
+        power_keys = ["ipp", "nea_sub", "nea_ror", "nea_storage", "import"]
+        last_idx = None
+        for i in range(len(months) - 1, -1, -1):
+            if any(i < len(entry.get(k) or []) and (entry.get(k) or [])[i] is not None for k in power_keys):
+                last_idx = i
+                break
+        if last_idx is not None:
+            by_src = {k: ((entry.get(k) or [])[last_idx] if last_idx < len(entry.get(k) or []) else None)
+                      for k in power_keys}
+            by_src = {k: (v or 0.0) for k, v in by_src.items()}
+            grand = sum(by_src.values())
+            if grand:
+                month_label = f"{latest_fy} {months[last_idx]}" if last_idx < len(months) else latest_fy
+                parts = " | ".join(f"{label} {by_src.get(key, 0):,.0f} MW ({by_src.get(key, 0) / grand * 100:,.1f}%)"
+                                    for key, label in src_defs)
+                segs.append((f"🔌 POWER MIX ({month_label}): {parts}", "#e0c3fc"))
 
     return segs
 
