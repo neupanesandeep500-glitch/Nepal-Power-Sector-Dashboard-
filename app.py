@@ -221,9 +221,8 @@ app = dash.Dash(
         {
             "name": "description",
             "content": (
-                "Nepal Power Plants Dashboard — live licensing, generation, and "
-                "transmission tracker for Nepal's hydropower, solar, wind, and "
-                "co-generation power plants. Source: www.nea.org.np."
+                "Nepal Power Plants Dashboard — Live licensing, generation, and "
+                "transmission tracker for Nepal Source:www.doed.gov.np & www.nea.org.np."
             ),
         },
     ],
@@ -807,7 +806,7 @@ app.layout = dbc.Container(fluid=True, children=[
                 html.Div([
                     html.Div("Nepal Power Plants Dashboard",
                               className="site-header-title"),
-                    html.Div("Source: www.nea.org.np | Live licensing, generation & transmission tracker for Nepal's power plants",
+                    html.Div("Source: www.nea.org.np & www.nea.org.np | Live Licensing, Operational Performance tracker and Estimator for Nepal's Power Sector",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
@@ -822,13 +821,13 @@ app.layout = dbc.Container(fluid=True, children=[
 
     dbc.Tabs(id="main-tabs", active_tab="overview", className="main-tabs-nav", children=[
         dbc.Tab(label="📊 Overview", tab_id="overview"),
-        dbc.Tab(label="📜 License Status", tab_id="license_status"),
+        dbc.Tab(label="🪪 License Status", tab_id="license_status"),
         dbc.Tab(label="📈 License Insights", tab_id="license_insights"),
         dbc.Tab(label="🗺️ GIS Map", tab_id="gis"),
         dbc.Tab(label="🏭 System Operational Performance", tab_id="nea_operational"),
-        dbc.Tab(label="🔬 NEA Forecast Lab", tab_id="nea_forecast"),
+        dbc.Tab(label="🔬 Forecast Lab", tab_id="nea_forecast"),
         dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
-        dbc.Tab(label="📄 Generate Report", tab_id="reports"),
+        dbc.Tab(label="📝 Generate Report", tab_id="reports"),
     ]),
 
     dbc.Row(className="mt-3", children=[
