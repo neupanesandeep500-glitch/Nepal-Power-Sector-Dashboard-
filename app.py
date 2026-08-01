@@ -214,8 +214,19 @@ def get_type_colors():
 app = dash.Dash(
     __name__,
     external_stylesheets=[dbc.themes.FLATLY, dbc.icons.BOOTSTRAP],
-    title="Nepal Power Plant & Transmission License Status",
+    title="Nepal Power Plants Dashboard",
     suppress_callback_exceptions=True,
+    meta_tags=[
+        {"name": "viewport", "content": "width=device-width, initial-scale=1"},
+        {
+            "name": "description",
+            "content": (
+                "Nepal Power Plants Dashboard — live licensing, generation, and "
+                "transmission tracker for Nepal's hydropower, solar, wind, and "
+                "co-generation power plants. Source: www.nea.org.np."
+            ),
+        },
+    ],
 )
 server = app.server
 
@@ -794,9 +805,9 @@ app.layout = dbc.Container(fluid=True, children=[
                          alt="Organisation logo", className="me-2 site-header-logo")
                 if ss.get_logo_path() else None,
                 html.Div([
-                    html.Div("Nepal Power Plant and Transmission Line License Status Dashboard",
+                    html.Div("Nepal Power Plants Dashboard",
                               className="site-header-title"),
-                    html.Div("Source: www.doed.gov.np | Licensing pipeline overview",
+                    html.Div("Source: www.nea.org.np | Live licensing, generation & transmission tracker for Nepal's power plants",
                               className="site-header-subtitle"),
                 ]),
             ], className="d-flex align-items-center")),
