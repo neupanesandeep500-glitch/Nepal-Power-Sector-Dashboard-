@@ -133,14 +133,23 @@
  * All model fitting (Linear/Holt/Moving-Average/ARIMA/SARIMA/Hybrid) happens
  * server-side with statsmodels — this file only renders what the API returns.
  *
- * NOTE: the "spike at the history→forecast join" issue is fixed entirely on
- * the server side (NEA.py's _run_single_model continuity correction, which
- * now anchors each candidate forecast's FIRST point to the last real
- * observation instead of to the model's internal fitted level). Nothing in
- * this file needed to change for that fix — it only ever renders whatever
- * past_values/pred_values (or, for composites, reported_past_values/
- * aggregate.pred_values) the API returns, and those now already join up
- * cleanly.
+ * NOTE on the "spike at the history→forecast join": this had two separate
+ * causes, one server-side and one here in the chart config.
+ *   1) DATA: NEA.py's _run_single_model continuity correction anchors each
+ *      candidate forecast's FIRST point to the last real observation
+ *      instead of to the model's internal fitted level, so past_values/
+ *      pred_values (and, for composites, aggregate.pred_values vs. the
+ *      bridge computed below) already join with zero numeric jump.
+ *   2) RENDERING: even with a zero numeric jump, Chart.js's default curved
+ *      line (tension > 0) fits a cardinal spline through each dataset's
+ *      points, and a spline can overshoot past a point when the segment
+ *      before it is flat (base -> first forecast point, forced equal by
+ *      the correction above) and the segment after it isn't — producing a
+ *      visible bump right at the seam that isn't in the underlying data at
+ *      all. The History/Forecast/Reported-Total/Forecast-Total lines below
+ *      now use tension: 0 (straight segments) specifically to remove that
+ *      rendering artifact — a straight line literally can't overshoot a
+ *      point it passes through.
  * ============================================================================= */
 
 const STYLE = __NEA_STYLE_JSON__;
@@ -298,8 +307,8 @@ function singleSeriesChartConfig(pastLabels, predLabels, pastValues, predValues,
   const pastSeries = pastValues.concat(Array(predLabels.length).fill(null));
   const predSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(predValues);
   const datasets = [
-    { label: "History", data: pastSeries, borderColor: "#1565c0", backgroundColor: "#1565c0", tension: 0.2, borderWidth: 2, pointRadius: 3 },
-    { label: "Forecast", data: predSeries, borderColor: "#c62828", backgroundColor: "#c62828", tension: 0.2, borderWidth: 2.5, pointRadius: 3 },
+    { label: "History", data: pastSeries, borderColor: "#1565c0", backgroundColor: "#1565c0", tension: 0, borderWidth: 2, pointRadius: 3 },
+    { label: "Forecast", data: predSeries, borderColor: "#c62828", backgroundColor: "#c62828", tension: 0, borderWidth: 2.5, pointRadius: 3 },
   ];
   if (lo && lo.length && hi && hi.length) {
     const loSeries = Array(pastLabels.length - 1).fill(null).concat([baseValue]).concat(lo);
@@ -383,7 +392,7 @@ function renderComposite(data) {
       type: "line", label: "Reported Total (history)",
       data: reported.concat(Array(nPred).fill(null)),
       borderColor: "#20293a", backgroundColor: "#20293a",
-      borderWidth: 2, pointRadius: 2, tension: 0.15, order: 0,
+      borderWidth: 2, pointRadius: 2, tension: 0, order: 0,
     });
   }
 
@@ -425,7 +434,7 @@ function renderComposite(data) {
     datasets.push({
       type: "line", label: "Forecast Total (sum of components)",
       data: sumLine, borderColor: "#c62828", backgroundColor: "#c62828",
-      borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0.15, order: 0,
+      borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0, order: 0,
     });
     if (data.aggregate.pred_lo && data.aggregate.pred_lo.length && data.aggregate.pred_hi && data.aggregate.pred_hi.length) {
       const loLine = Array(nPast - 1).fill(null).concat([bridge]).concat(data.aggregate.pred_lo);
