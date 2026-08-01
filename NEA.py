@@ -808,19 +808,29 @@ def sync_status() -> dict:
 
 # ── HTML rendering (template + live data injection) ─────────────────────
 
-def render_dashboard_html() -> str:
+_DEFAULT_NEA_STYLE = {
+    "font_family": "Arial", "title_size": 16, "label_size": 12,
+    "show_grid": True, "animation": True,
+    "palette": ["#1565c0", "#c62828", "#2e7d32", "#f9a825", "#6a1b9a", "#00897b", "#ff8f00", "#8e24aa"],
+}
+
+
+def render_dashboard_html(style: dict = None) -> str:
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         template = f.read()
     data_json = json.dumps(get_dashboard_data())
-    html = template.replace("__NEA_DATA_JSON__", data_json)
+    style_json = json.dumps(style or _DEFAULT_NEA_STYLE)
+    html = template.replace("__NEA_DATA_JSON__", data_json).replace("__NEA_STYLE_JSON__", style_json)
     return html
-def render_forecast_lab_html() -> str:
+def render_forecast_lab_html(style: dict = None) -> str:
     """The Forecast Lab page is static HTML/JS — it pulls its parameter
     list and forecast results live from the /api/nea-forecast-params and
-    /api/nea-forecast endpoints (see app.py), so no data injection is
-    needed here."""
+    /api/nea-forecast endpoints (see app.py), so only the Custom Style
+    payload needs injecting here, not any dashboard data."""
     with open(FORECAST_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-        return f.read()
+        template = f.read()
+    style_json = json.dumps(style or _DEFAULT_NEA_STYLE)
+    return template.replace("__NEA_STYLE_JSON__", style_json)
 def forecast_result_to_dict(fr: "ForecastResult") -> dict:
     """JSON-serializable shape for a ForecastResult, used by the
     /api/nea-forecast endpoint."""
