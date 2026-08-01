@@ -53,6 +53,7 @@ HOW TO WIRE THIS INTO app.py
 from __future__ import annotations
 
 import io
+import itertools
 import json
 import os
 import re
@@ -435,25 +436,11 @@ _AE_KEYWORDS = {
 def _series_by_alias(cats: dict, length: int):
     """Fuzzy-match each Annual Energy & Peak Load output key against the
     sheet's actual row labels, falling back to zeros so a missing/renamed
-    row degrades gracefully instead of KeyError-ing the whole dashboard.
-
-    Every returned series is clamped to exactly `length` items. The raw
-    sheet row can come back a cell longer or shorter than the Fiscal Year
-    row (a stray subtotal cell, a merged header, a trailing blank) — left
-    unclamped, that silently desyncs anything that reads "the last value"
-    from it: the Overview KPIs (latest_total_avail, avail_growth) and,
-    worse, the Forecast Lab's stacked-scenario bridge point, which reads
-    the array's true last element and can end up anchoring the forecast
-    line to a stray value instead of the real latest year."""
+    row degrades gracefully instead of KeyError-ing the whole dashboard."""
     out = {}
     for key, (must_include, must_exclude) in _AE_KEYWORDS.items():
         found = _find_key(cats, must_include, must_exclude)
-        series = cats.get(found) if found else None
-        if series is None:
-            series = [0] * length
-        elif len(series) != length:
-            series = (list(series) + [None] * length)[:length]
-        out[key] = series
+        out[key] = cats.get(found) if found else [0] * length
     return out
 
 
@@ -903,16 +890,52 @@ def _monthly_series_from_cache() -> dict:
     }}
 
 
+def _viable_models_for_values(x_hist, values, monthly, season_length=12):
+    """Which models can actually be fit to THIS parameter's specific
+    history — tested directly against the real (already-cleaned) data,
+    no fallback. Used to build the Model dropdown per-parameter, so a
+    short or non-seasonal series never offers a model (e.g. SARIMA on
+    an 8-point annual series) that's guaranteed to fail or spike; only
+    genuinely loadable models are listed. Linear Regression is always
+    included — it only needs 2 distinct points and is the universal
+    fallback used elsewhere too."""
+    candidates = ["linear", "holt", "moving", "arima", "hybrid"] + (["sarima"] if monthly else [])
+    ok = []
+    for m in candidates:
+        try:
+            pred, _meta, _lo, _hi, _fitted = _fit_one_model(m, x_hist, values, 1, monthly, season_length)
+        except Exception:
+            continue
+        if m == "linear" or _is_reasonable_forecast(values, pred):
+            ok.append(m)
+    if "linear" not in ok:
+        ok.append("linear")
+    return ok
+
+
 def forecast_param_choices():
     """Dropdown-ready list of every forecastable parameter (annual +
     the one seasonal monthly series), each tagged with whether it's
-    monthly so the caller knows which model list / run_forecast(monthly=)
-    flag to use."""
-    annual = [{"label": v["label"], "value": k, "monthly": False}
-              for k, v in _annual_series_from_cache().items()]
-    monthly = [{"label": v["label"], "value": k, "monthly": True}
-               for k, v in _monthly_series_from_cache().items()]
-    return annual + monthly
+    monthly (so the caller knows which run_forecast(monthly=) flag to
+    use) and with `models`: the list of models that actually run
+    cleanly for that specific parameter's history, so the Forecast
+    Lab's Model dropdown only ever offers a real, loadable option."""
+    out = []
+    for k, v in _annual_series_from_cache().items():
+        values, span = _clean_series(v["values"])
+        if values is None:
+            continue
+        x_hist = v["years"][span[0]:span[1] + 1] if v.get("years") else list(range(len(values)))
+        out.append({"label": v["label"], "value": k, "monthly": False,
+                     "models": _viable_models_for_values(x_hist, values, False)})
+    for k, v in _monthly_series_from_cache().items():
+        values, span = _clean_series(v["values"])
+        if values is None:
+            continue
+        season_length = v.get("season_length", 12)
+        out.append({"label": v["label"], "value": k, "monthly": True,
+                     "models": _viable_models_for_values(list(range(len(values))), values, True, season_length)})
+    return out
 
 
 MODEL_CHOICES_ANNUAL = [
@@ -1024,20 +1047,8 @@ def _holt_forecast(y_hist, n_ahead):
 def _best_arima(y_hist, max_p=2, max_d=1, max_q=2):
     y = pd.Series(y_hist, dtype=float)
     best_aic, best_order, best_fit = np.inf, (1, 1, 0), None
-    # A curated shortlist instead of the full (max_p+1)*(max_d+1)*(max_q+1)
-    # grid product (17 combos). Composite forecasts refit this per
-    # component (up to 4-7 per request for Generation/Energy Mix, and
-    # Hybrid pays the same cost since it calls this too), so the full
-    # grid can take long enough on a modest server to trip the gunicorn/
-    # Render request timeout and come back as an HTML error page instead
-    # of JSON. These orders cover what tends to actually win AIC on
-    # NEA's short annual/monthly series.
-    candidate_orders = [
-        (1, 1, 0), (0, 1, 1), (1, 1, 1), (2, 1, 0), (0, 1, 2),
-        (2, 1, 1), (1, 0, 0), (0, 1, 0), (2, 1, 2),
-    ]
-    for p, d, q in candidate_orders:
-        if p > max_p or d > max_d or q > max_q or (p == 0 and q == 0):
+    for p, d, q in itertools.product(range(max_p + 1), range(max_d + 1), range(max_q + 1)):
+        if p == 0 and q == 0:
             continue
         try:
             fit = ARIMA(y, order=(p, d, q)).fit()
@@ -1065,18 +1076,10 @@ def _arima_forecast(y_hist, n_ahead):
 def _sarima_forecast(y_hist, n_ahead, season_length=12):
     y = pd.Series(y_hist, dtype=float)
     best_aic, best_spec, best_fit = np.inf, None, None
-    # Curated shortlist instead of the full 3x3=9-combo product — SARIMAX
-    # fits are slower than plain ARIMA, and this runs per component on the
-    # monthly Energy Mix composite (up to 7 components in one request), so
-    # the full grid multiplies into a real timeout risk.
-    candidate_specs = [
-        ((1, 1, 0), (1, 0, 0, season_length)),
-        ((0, 1, 1), (0, 1, 1, season_length)),
-        ((1, 1, 1), (1, 1, 0, season_length)),
-        ((0, 1, 1), (1, 0, 0, season_length)),
-        ((1, 1, 0), (0, 1, 1, season_length)),
-    ]
-    for order, sorder in candidate_specs:
+    for order, sorder in itertools.product(
+        [(1, 1, 0), (0, 1, 1), (1, 1, 1)],
+        [(1, 0, 0, season_length), (0, 1, 1, season_length), (1, 1, 0, season_length)],
+    ):
         try:
             fit = SARIMAX(y, order=order, seasonal_order=sorder,
                            enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
@@ -1129,13 +1132,48 @@ class ForecastResult:
     meta: dict = field(default_factory=dict)
 
 
-def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, season_length: int = 12):
-    """Shared dispatcher used by both run_forecast() (single series) and
-    run_composite_forecast() (per-component series inside a stacked
-    group), so every parameter — whether it's charted on its own or as
-    one slice of a stack — goes through the exact same statsmodels
-    fitting code. Returns (pred, meta, lo, hi, fitted); lo/hi are []
-    for models that don't produce a confidence interval."""
+def _is_reasonable_forecast(values, pred):
+    """Reject a forecast that jumps far more violently than the
+    historical series ever did — the usual symptom of an ill-fitting
+    ARIMA/SARIMA order or an unstable Holt trend on a short/noisy
+    series, not a genuine signal. Compares each forecasted step-to-step
+    change against the largest and typical step-to-step change actually
+    observed in history, with generous headroom for a real accelerating
+    trend. Used to trigger the model fallback chain in
+    _run_single_model(), not to reject a forecast outright."""
+    if not pred:
+        return False
+    try:
+        pred_f = [float(v) for v in pred]
+    except (TypeError, ValueError):
+        return False
+    if any(not np.isfinite(v) for v in pred_f):
+        return False
+    vals = [float(v) for v in values if v is not None]
+    if len(vals) < 2:
+        return True
+    hist_diffs = [abs(vals[i] - vals[i - 1]) for i in range(1, len(vals))]
+    max_hist_step = max(hist_diffs) if hist_diffs else 0.0
+    typical_step = float(np.median(hist_diffs)) if hist_diffs else 0.0
+    last_val = abs(vals[-1])
+    cap = max(max_hist_step * 4, typical_step * 8, last_val * 2, 1e-6)
+    chain = [vals[-1]] + pred_f
+    step_changes = [abs(chain[i] - chain[i - 1]) for i in range(1, len(chain))]
+    return all(sv <= cap for sv in step_changes)
+
+
+# Fallback order tried, in turn, whenever the requested model either
+# raises an exception or clears the spike check above. "linear" is the
+# final rung — a simple least-squares fit on ≥3 points can't diverge or
+# throw, so every parameter is always forecastable by *something*.
+_MODEL_FALLBACK_CHAIN = ["holt", "moving", "linear"]
+
+
+def _fit_one_model(model: str, x_hist, values, n_ahead: int, monthly: bool, season_length: int = 12):
+    """Run exactly the requested model, no fallback. Returns
+    (pred, meta, lo, hi, fitted); lo/hi are [] for models that don't
+    produce a confidence interval. Raises on failure — callers that
+    want automatic fallback should go through _run_single_model()."""
     lo, hi = [], []
     if model == "linear":
         pred, meta, fitted = _linear_forecast(x_hist, values, n_ahead)
@@ -1154,6 +1192,43 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
         pred, meta, fitted = _hybrid_forecast(x_hist, values, n_ahead)
     else:
         raise ValueError(f"Unknown model {model!r}")
+    return pred, meta, lo, hi, fitted
+
+
+def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, season_length: int = 12):
+    """Shared dispatcher used by both run_forecast() (single series) and
+    run_composite_forecast() (per-component series inside a stacked
+    group), so every parameter — whether it's charted on its own or as
+    one slice of a stack — goes through the exact same statsmodels
+    fitting code, with the same automatic fallback and anti-spike
+    correction. Returns (pred, meta, lo, hi, fitted); lo/hi are []
+    for models that don't produce a confidence interval.
+
+    FALLBACK CHAIN: the requested model is tried first. If it raises
+    (too little data, a non-convergent fit, an unsupported
+    combination like SARIMA on an annual series) or its forecast
+    clears the spike check in _is_reasonable_forecast(), the next
+    model in _MODEL_FALLBACK_CHAIN is tried instead, ending at Linear
+    Regression — which only needs 2 distinct points and can't diverge
+    — so every parameter always produces *some* forecast rather than
+    an error or a wild spike. meta['requested_model'] /
+    meta['fallback_used'] record when this happened."""
+    chain = [model] + [m for m in _MODEL_FALLBACK_CHAIN if m != model]
+    pred = meta = fitted = None
+    lo, hi = [], []
+    last_err = None
+    for m in chain:
+        try:
+            pred, meta, lo, hi, fitted = _fit_one_model(m, x_hist, values, n_ahead, monthly, season_length)
+        except Exception as e:
+            last_err = e
+            continue
+        if m == "linear" or _is_reasonable_forecast(values, pred):
+            if m != model:
+                meta = {**meta, "requested_model": model, "fallback_used": m}
+            break
+    else:
+        raise last_err or ValueError(f"Could not fit any forecasting model for this parameter.")
 
     # ── CONTINUITY CORRECTION ───────────────────────────────────────
     # Holt/ARIMA/SARIMA forecast forward from their own internal
@@ -1167,7 +1242,8 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
     # Anchor the whole forecast to the last real observation by
     # shifting every predicted (and CI) point by the model's own
     # last in-sample residual, so the forecast line always leaves
-    # from exactly where the history line ends.
+    # from exactly where the history line ends — the forecast's
+    # first point joins the base value with no jump.
     last_actual = values[-1] if len(values) else None
     last_fitted = fitted[-1] if fitted else None
     if last_actual is not None and last_fitted is not None:
@@ -1186,30 +1262,40 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
 
 def run_forecast(param_key: str, model: str, n_ahead: int, monthly: bool = False) -> ForecastResult:
     if not get_dashboard_data():
-        raise ValueError("No NEA operational data has synced yet — check that the Google "
-                          "Sheet is shared as \"Anyone with the link\" and that a live sync "
-                          "or bundled fallback has completed at least once.")
+        raise ValueError("NEA operational data is not available right now. Please check back later.")
     n_ahead = max(1, min(int(n_ahead), 20))
     if monthly:
         series = _monthly_series_from_cache()[param_key]
-        labels = series["labels"]
-        values = series["values"]
-        pred_labels = [f"+{i} mo" for i in range(1, n_ahead + 1)]
-        x_hist = list(range(len(values)))
+        raw_labels = series["labels"]
+        raw_values = series["values"]
         season_length = series.get("season_length", 12)
     else:
         series = _annual_series_from_cache()[param_key]
-        values = series["values"]
+        raw_values = series["values"]
         if series.get("years"):
-            labels = [str(y) for y in series["years"]]
-            last_year = series["years"][-1]
-            pred_labels = [str(last_year + i) for i in range(1, n_ahead + 1)]
-            x_hist = series["years"]
+            raw_labels = [str(y) for y in series["years"]]
         else:
-            labels = series["fy_labels"]
-            pred_labels = [f"FY+{i}" for i in range(1, n_ahead + 1)]
-            x_hist = list(range(len(labels)))
+            raw_labels = series["fy_labels"]
         season_length = 12
+
+    # Trim to the real (first..last non-None) span and interpolate any
+    # internal gaps — a hand-maintained sheet with a blank cell or two
+    # shouldn't crash every model, including the guaranteed Linear
+    # fallback, which needs plain floats.
+    values, span = _clean_series(raw_values)
+    if values is None:
+        raise ValueError("Not enough data to forecast this parameter yet (fewer than 3 usable points).")
+    first, last = span
+    labels = raw_labels[first:last + 1]
+    x_hist = series["years"][first:last + 1] if (not monthly and series.get("years")) else list(range(len(values)))
+
+    if monthly:
+        pred_labels = [f"+{i} mo" for i in range(1, n_ahead + 1)]
+    elif series.get("years"):
+        last_year = x_hist[-1]
+        pred_labels = [str(last_year + i) for i in range(1, n_ahead + 1)]
+    else:
+        pred_labels = [f"FY+{i}" for i in range(1, n_ahead + 1)]
 
     pred, meta, lo, hi, fitted = _run_single_model(model, x_hist, values, n_ahead, monthly, season_length)
     meta = {**meta, **_fit_metrics(values, fitted)}
@@ -1324,10 +1410,29 @@ def _monthly_composite_defs() -> dict:
 
 def composite_param_choices():
     """Dropdown-ready list of every stack-able (composite) parameter,
-    parallel to forecast_param_choices() for single series."""
-    annual = [{"label": v["label"], "value": k, "monthly": False, "unit": v["unit"]}
+    parallel to forecast_param_choices() for single series. `models`
+    is the intersection of what's viable for every component in the
+    group — the composite forecast fits the same requested model to
+    each component, so a model only belongs on this dropdown if it
+    will actually run for all of them, not just some."""
+    _ORDER = ["linear", "holt", "moving", "arima", "hybrid", "sarima"]
+
+    def _group_models(v):
+        common = None
+        for comp in v["components"]:
+            values, span = _clean_series(comp["values"])
+            if values is None:
+                continue
+            x_hist = list(range(len(values)))
+            viable = set(_viable_models_for_values(x_hist, values, v["monthly"], v.get("season_length", 12)))
+            common = viable if common is None else (common & viable)
+        return [m for m in _ORDER if m in common] if common else ["linear"]
+
+    annual = [{"label": v["label"], "value": k, "monthly": False, "unit": v["unit"],
+               "models": _group_models(v)}
               for k, v in _annual_composite_defs().items()]
-    monthly = [{"label": v["label"], "value": k, "monthly": True, "unit": v["unit"]}
+    monthly = [{"label": v["label"], "value": k, "monthly": True, "unit": v["unit"],
+                "models": _group_models(v)}
                for k, v in _monthly_composite_defs().items()]
     return annual + monthly
 
@@ -1339,9 +1444,7 @@ def run_composite_forecast(composite_key: str, model: str, n_ahead: int) -> dict
     since the shape — a list of components plus one aggregate — doesn't
     fit ForecastResult)."""
     if not get_dashboard_data():
-        raise ValueError("No NEA operational data has synced yet — check that the Google "
-                          "Sheet is shared as \"Anyone with the link\" and that a live sync "
-                          "or bundled fallback has completed at least once.")
+        raise ValueError("NEA operational data is not available right now. Please check back later.")
     n_ahead = max(1, min(int(n_ahead), 20))
 
     annual_defs = _annual_composite_defs()
