@@ -140,16 +140,29 @@
  *      instead of to the model's internal fitted level, so past_values/
  *      pred_values (and, for composites, aggregate.pred_values vs. the
  *      bridge computed below) already join with zero numeric jump.
- *   2) RENDERING: even with a zero numeric jump, Chart.js's default curved
- *      line (tension > 0) fits a cardinal spline through each dataset's
- *      points, and a spline can overshoot past a point when the segment
- *      before it is flat (base -> first forecast point, forced equal by
- *      the correction above) and the segment after it isn't — producing a
- *      visible bump right at the seam that isn't in the underlying data at
- *      all. The History/Forecast/Reported-Total/Forecast-Total lines below
- *      now use tension: 0 (straight segments) specifically to remove that
- *      rendering artifact — a straight line literally can't overshoot a
- *      point it passes through.
+ *   2) RENDERING (curve overshoot): even with a zero numeric jump, Chart.js's
+ *      default curved line (tension > 0) fits a cardinal spline through each
+ *      dataset's points, and a spline can overshoot past a point when the
+ *      segment before it is flat (base -> first forecast point, forced
+ *      equal by the correction above) and the segment after it isn't —
+ *      producing a visible bump right at the seam that isn't in the
+ *      underlying data at all. The History/Forecast/Reported-Total/
+ *      Forecast-Total lines below now use tension: 0 (straight segments)
+ *      specifically to remove that rendering artifact.
+ *   3) RENDERING (unintended stack grouping — the actual cause of the
+ *      "2x base year value" spike some users still saw): scales.y.stacked
+ *      = true applies to every dataset on that axis, bar and line alike.
+ *      Chart.js groups datasets into a stack by `dataset.stack`, but when
+ *      it's left unset it silently falls back to grouping by chart type —
+ *      so "Reported Total (history)" and "Forecast Total (sum of
+ *      components)" (both `type: "line"`, neither with a `stack` id) fell
+ *      into the same default group and got summed together at the shared
+ *      seam index, doubling the value right where the two lines met. Every
+ *      line dataset in renderComposite() now gets its own unique `stack`
+ *      id so none of them are ever combined with one another, and the
+ *      seam value itself is now simply the base year total — nothing
+ *      computed or summed — connected straight to the first forecasted
+ *      year.
  * ============================================================================= */
 
 const STYLE = __NEA_STYLE_JSON__;
@@ -386,10 +399,26 @@ function renderComposite(data) {
 
   // reported total (as actually recorded historically) — lets
   // you sanity-check the stacked bars against the recorded total
+  //
+  // NOTE on the REAL cause of the seam spike (the "twice base year value"
+  // bump): scales.y.stacked = true (below) applies to every dataset that
+  // shares that y-axis, bar and line alike. Chart.js groups datasets into
+  // stacks by `dataset.stack`, but when `stack` isn't set it silently
+  // falls back to grouping by chart type instead — so any two `type:
+  // "line"` datasets left without an explicit `stack` id land in the same
+  // group by default and get summed together at every shared x-index.
+  // That's what was happening here: "Reported Total (history)" and
+  // "Forecast Total (sum of components)" both had a real value at the
+  // last historical index (one ~= the base-year total, the other the
+  // bridge point, ~= the same total) and Chart.js was adding them, so the
+  // rendered point at the seam was ~2x the base-year value — a spike that
+  // wasn't in the data at all, just an artifact of an unintended shared
+  // stack group. Every line dataset below now gets its own unique `stack`
+  // id so none of them are ever combined with one another.
   const reported = data.aggregate.reported_past_values || [];
   if (reported.length) {
     datasets.push({
-      type: "line", label: "Reported Total (history)",
+      type: "line", label: "Reported Total (history)", stack: "line-reported-total",
       data: reported.concat(Array(nPred).fill(null)),
       borderColor: "#20293a", backgroundColor: "#20293a",
       borderWidth: 2, pointRadius: 2, tension: 0, order: 0,
@@ -402,45 +431,25 @@ function renderComposite(data) {
   // produced one (currently: arima/sarima)
   const aggPred = data.aggregate.pred_values || [];
   if (aggPred.length) {
-    // Bridge from the sum of the components' own last actual values, not
-    // the separately-reported Total column — the two aren't guaranteed to
-    // match (different definition, rounding, an extra source not broken
-    // out as its own component), and bridging from a mismatched Total was
-    // exactly what produced a visible spike right at the history/forecast
-    // seam. base_value is computed backend-side from the same components
-    // agg_pred is anchored to, so this join is continuous by construction.
-        // Bridge from the sum of each component's last actual value.
-    // This guarantees the forecast line starts exactly at the top of the
-    // historical stack and removes the spike caused by the separately-
-    // reported Total column (which counts extra sources).
-    let bridge = 0;
-    data.components.forEach(c => {
-      if (c.past_values && c.past_values.length) {
-        bridge += c.past_values[c.past_values.length - 1];
-      }
-    });
-    // Only fall back to reported total if something went wrong above
-    if ((!bridge && bridge !== 0) && data.aggregate.base_value != null) {
-      bridge = data.aggregate.base_value;
-    }
-    if ((!bridge && bridge !== 0) && reported.length) {
-      bridge = reported[reported.length - 1];
-    }
-    if (!bridge && bridge !== 0) {
-      bridge = aggPred[0];
-    }
+    // The seam point is simply the base year value — nothing added,
+    // nothing summed. aggregate.pred_values[0] is already anchored
+    // server-side to equal this same base value (see _run_single_model's
+    // continuity correction in NEA.py), so the line drawn here is just a
+    // straight connection from the base year value to the first
+    // forecasted year, then on through the rest of the forecast.
+    const bridge = (data.aggregate.base_value != null) ? data.aggregate.base_value : aggPred[0];
 
     const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
     datasets.push({
-      type: "line", label: "Forecast Total (sum of components)",
+      type: "line", label: "Forecast Total (sum of components)", stack: "line-forecast-total",
       data: sumLine, borderColor: "#c62828", backgroundColor: "#c62828",
       borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0, order: 0,
     });
     if (data.aggregate.pred_lo && data.aggregate.pred_lo.length && data.aggregate.pred_hi && data.aggregate.pred_hi.length) {
       const loLine = Array(nPast - 1).fill(null).concat([bridge]).concat(data.aggregate.pred_lo);
       const hiLine = Array(nPast - 1).fill(null).concat([bridge]).concat(data.aggregate.pred_hi);
-      datasets.push({ type: "line", label: "Upper (80% CI, total)", data: hiLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: "+1", pointRadius: 0, borderWidth: 0, order: 1 });
-      datasets.push({ type: "line", label: "Lower (80% CI, total)", data: loLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: false, pointRadius: 0, borderWidth: 0, order: 1 });
+      datasets.push({ type: "line", label: "Upper (80% CI, total)", stack: "line-ci-upper", data: hiLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: "+1", pointRadius: 0, borderWidth: 0, order: 1 });
+      datasets.push({ type: "line", label: "Lower (80% CI, total)", stack: "line-ci-lower", data: loLine, borderColor: "rgba(198,40,40,0)", backgroundColor: "rgba(198,40,40,0.14)", fill: false, pointRadius: 0, borderWidth: 0, order: 1 });
     }
   }
 
