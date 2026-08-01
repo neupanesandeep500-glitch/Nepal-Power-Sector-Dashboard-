@@ -80,7 +80,7 @@
       <span class="swatch" style="background:#20293a;"></span>Reported total (history)
       <span class="swatch" style="background:#c62828;"></span>Sum of forecasted components
     </div>
-    <div class="source-note"><i class="fas fa-database"></i> Data is pulled live from the NEA operational data sheet — nothing on this page is sample/demo data.</div>
+    <div class="source-note"><i class="fas fa-database"></i> Figures are drawn from NEA's published operational data (<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>) — nothing on this page is sample/demo data.</div>
   </div>
 
   <div class="loading" id="loading-msg"><i class="fas fa-spinner fa-spin"></i> Running forecast…</div>
@@ -105,7 +105,7 @@
  *
  * This page used to generate a seeded-random demo dataset and re-implement
  * its own forecasting math in JS. It doesn't anymore: every number here
- * comes from the live NEA operational data sheet via two backend endpoints
+ * comes from NEA's live operational data via two backend endpoints
  * (see app.py / NEA.py):
  *
  *   GET  /api/nea-forecast-params            -> single-series parameters
@@ -171,6 +171,12 @@ function clearComponentCharts() {
 function populateParamSelect() {
   const sel = document.getElementById("param-select");
   sel.innerHTML = "";
+  const modelLabels = {
+    linear: "Linear Regression", holt: "Holt Exponential Smoothing (trend)",
+    moving: "Moving Average", arima: "ARIMA (auto order, AIC-selected)",
+    hybrid: "Hybrid (Linear + ARIMA ensemble)", sarima: "SARIMA (seasonal, period=12)",
+  };
+  window.MODEL_LABELS = modelLabels;
 
   if (SINGLE_PARAMS.length) {
     const og = document.createElement("optgroup");
@@ -181,6 +187,7 @@ function populateParamSelect() {
       opt.textContent = `${p.label}  (${p.monthly ? "monthly" : "annual"})`;
       opt.dataset.monthly = p.monthly ? "1" : "0";
       opt.dataset.kind = "single";
+      opt.dataset.models = (p.models && p.models.length ? p.models : ["linear"]).join(",");
       og.appendChild(opt);
     });
     sel.appendChild(og);
@@ -195,6 +202,7 @@ function populateParamSelect() {
       opt.textContent = `${p.label} — stacked  (${p.monthly ? "monthly" : "annual"})`;
       opt.dataset.monthly = p.monthly ? "1" : "0";
       opt.dataset.kind = "composite";
+      opt.dataset.models = (p.models && p.models.length ? p.models : ["linear"]).join(",");
       og2.appendChild(opt);
     });
     sel.appendChild(og2);
@@ -206,25 +214,24 @@ function populateParamSelect() {
 function updateModelChoices() {
   const sel = document.getElementById("param-select");
   const opt = sel.options[sel.selectedIndex];
-  const monthly = !!(opt && opt.dataset.monthly === "1");
   const modelSelect = document.getElementById("model-select");
   const prevValue = modelSelect.value;
 
+  // Only the models the backend actually confirmed will run cleanly for
+  // THIS parameter's own history are offered — a short or non-seasonal
+  // series never shows a model (e.g. SARIMA on an 8-point annual series)
+  // that's guaranteed to fail or produce a wild spike.
+  const order = ["linear", "holt", "moving", "arima", "hybrid", "sarima"];
+  const available = opt && opt.dataset.models ? opt.dataset.models.split(",") : ["linear"];
+  const models = order.filter(m => available.includes(m));
+
   modelSelect.innerHTML = "";
-  const models = [
-    ["linear", "Linear Regression"],
-    ["holt", "Holt Exponential Smoothing (trend)"],
-    ["moving", "Moving Average"],
-    ["arima", "ARIMA (auto order, AIC-selected)"],
-    ["hybrid", "Hybrid (Linear + ARIMA ensemble)"],
-  ];
-  if (monthly) models.push(["sarima", "SARIMA (seasonal, period=12)"]);
-  models.forEach(([val, label]) => {
+  models.forEach(val => {
     const o = document.createElement("option");
-    o.value = val; o.textContent = label;
+    o.value = val; o.textContent = window.MODEL_LABELS[val] || val;
     modelSelect.appendChild(o);
   });
-  if (models.some(m => m[0] === prevValue)) modelSelect.value = prevValue;
+  if (models.includes(prevValue)) modelSelect.value = prevValue;
 }
 
 /* ---------- stats table ---------- */
@@ -328,8 +335,8 @@ function renderComposite(data) {
     });
   });
 
-  // reported total (as actually recorded in the sheet, history only) — lets
-  // you sanity-check the stacked bars against the sheet's own total column
+  // reported total (as actually recorded historically) — lets
+  // you sanity-check the stacked bars against the recorded total
   const reported = data.aggregate.reported_past_values || [];
   if (reported.length) {
     datasets.push({
@@ -346,14 +353,7 @@ function renderComposite(data) {
   // produced one (currently: arima/sarima)
   const aggPred = data.aggregate.pred_values || [];
   if (aggPred.length) {
-    // Anchor to the index the "Reported Total" line actually renders at
-    // (nPast - 1), not reported[reported.length - 1]. If the backend ever
-    // sends a reported[] array that's a different length than the past
-    // labels, indexing by "the array's last element" silently grabs the
-    // wrong year's value while the chart itself still renders correctly
-    // truncated/padded to nPast points — this keeps the bridge point
-    // locked to the same point the black line actually ends on.
-    const bridge = (nPast > 0 && reported.length >= nPast) ? reported[nPast - 1] : null;
+    const bridge = reported.length ? reported[reported.length - 1] : null;
     const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
     datasets.push({
       type: "line", label: "Forecast Total (sum of components)",
@@ -422,7 +422,7 @@ async function runForecast() {
 
   const sel = document.getElementById("param-select");
   const opt = sel.options[sel.selectedIndex];
-  if (!opt) { showError("No forecastable parameter is available. Check that the NEA data sheet has synced (see the Admin panel's NEA Data Sync status)."); return; }
+  if (!opt) { showError("No forecastable parameter is available right now. Please check back later."); return; }
 
   const [kind, key] = opt.value.split(":");
   const monthly = opt.dataset.monthly === "1";
@@ -478,7 +478,7 @@ async function boot() {
   }
 
   if (!SINGLE_PARAMS.length && !COMPOSITE_PARAMS.length) {
-    showError("No forecastable parameters are available yet. This usually means the NEA data sheet hasn't synced — check the Admin panel's NEA Data Sync status.");
+    showError("No forecastable parameters are available right now. Please check back later, or refer to NEA's published reports at www.nea.org.np.");
     return;
   }
 
