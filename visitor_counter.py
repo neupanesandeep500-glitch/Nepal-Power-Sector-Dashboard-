@@ -119,10 +119,18 @@ def _worksheet():
         return sh.worksheet(_WORKSHEET_NAME)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(_WORKSHEET_NAME, rows=4, cols=2)
-        ws.update(_COUNT_LABEL_CELL, "visitor_count")
-        ws.update(_COUNT_VALUE_CELL, "0")
-        ws.update(_UPDATE_LABEL_CELL, "last_update")
-        ws.update(_UPDATE_VALUE_CELL, "")
+        # NOTE: use update_acell(label, value), not update(label, value).
+        # gspread 6.x flipped update()'s argument order to
+        # update(values, range_name) — a plain update("B1", "5") call now
+        # sends "B1" as the values matrix and "5" as the range name, which
+        # is an invalid A1 range and raises, silently caught by the
+        # try/except wrappers around every caller. update_acell() takes a
+        # single (label, value) pair directly and its signature hasn't
+        # changed, so it isn't affected by that break.
+        ws.update_acell(_COUNT_LABEL_CELL, "visitor_count")
+        ws.update_acell(_COUNT_VALUE_CELL, "0")
+        ws.update_acell(_UPDATE_LABEL_CELL, "last_update")
+        ws.update_acell(_UPDATE_VALUE_CELL, "")
         return ws
 
 
@@ -137,12 +145,12 @@ def _read_remote_count() -> int:
 
 def _write_remote_count(count: int) -> None:
     ws = _worksheet()
-    ws.update(_COUNT_VALUE_CELL, str(count))
+    ws.update_acell(_COUNT_VALUE_CELL, str(count))
 
 
 def _write_remote_update_stamp(stamp: str) -> None:
     ws = _worksheet()
-    ws.update(_UPDATE_VALUE_CELL, stamp)
+    ws.update_acell(_UPDATE_VALUE_CELL, stamp)
 
 
 # ── Public API ────────────────────────────────────────────────────────────
