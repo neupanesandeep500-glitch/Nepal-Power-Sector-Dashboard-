@@ -80,24 +80,12 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PLACEHOLDER_SHEET_URL = (
     "https://docs.google.com/spreadsheets/d/1PzTJmKWfBe2_mXFgXZlsOhMcxP85q8C7VnczGxaMM2U/edit?usp=sharing"
 )
-def _clean_env_url(v):
-    """Strip whitespace and, if present, a pair of surrounding quote
-    characters — a common real-world gotcha where a URL pasted into a
-    hosting platform's env-var field (Render, Railway, etc.) picks up
-    leading/trailing spaces or literal quote marks, which then breaks
-    the sheet-ID regex in _download_google_sheet_xlsx() silently."""
-    v = (v or "").strip()
-    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-        v = v[1:-1].strip()
-    return v
-
-
 # Kept for backward compatibility with any code importing NEA.DEFAULT_SHEET_URL
 # directly. This is resolved ONCE at import time from the env var only — use
 # _resolve_sheet_url() everywhere else, since that also picks up a sheet URL
 # saved from the admin panel (see set_sheet_url() below) without needing a
 # process restart.
-DEFAULT_SHEET_URL = _clean_env_url(os.environ.get("NEA_SHEET_URL")) or _PLACEHOLDER_SHEET_URL
+DEFAULT_SHEET_URL = os.environ.get("NEA_SHEET_URL", _PLACEHOLDER_SHEET_URL)
 
 CACHE_WORKBOOK_PATH = os.path.join(_HERE, "nea_workbook_cache.xlsx")
 TEMPLATE_PATH = os.path.join(_HERE, "nea_assets", "nea_operational_dashboard_template.html")
@@ -131,17 +119,9 @@ def _save_persisted_sheet_url(url):
 def _resolve_sheet_url():
     """Precedence: URL saved via the admin panel > NEA_SHEET_URL env var >
     the placeholder sheet baked into this file (which is NOT the user's
-    data and will fail unless they happen to have access to it).
-
-    NOTE: once a URL has been saved via the /admin panel it ALWAYS wins
-    over NEA_SHEET_URL, on every deploy, until it's explicitly cleared
-    (the "Clear saved URL" button on /admin, or clear_persisted_sheet_url()).
-    If you've set NEA_SHEET_URL on your hosting platform and the NEA tabs
-    still aren't picking it up, this override is almost always why —
-    check has_persisted_sheet_url() / the "NEA Data Status" box on /admin
-    before assuming the env var itself isn't being read."""
+    data and will fail unless they happen to have access to it)."""
     return (_load_persisted_sheet_url()
-            or _clean_env_url(os.environ.get("NEA_SHEET_URL"))
+            or os.environ.get("NEA_SHEET_URL")
             or _PLACEHOLDER_SHEET_URL)
 
 
@@ -773,27 +753,13 @@ def clear_persisted_sheet_url() -> bool:
 
 
 def bootstrap():
-    """Call once at app startup. Does one SYNCHRONOUS sync attempt (so the
-    very first page load already has real data if the network/sheet is
-    reachable), then start_background_refresh() takes over for periodic
-    reloads.
-
-    FIX: this used to fire the first sync into a daemon thread and return
-    immediately, contradicting its own docstring — the first request(s)
-    to /nea-operational-dashboard or /nea-forecast-lab right after a
-    deploy/restart could land before that thread finished downloading +
-    parsing the workbook, so the page rendered the "no data" state even
-    though the sync would have succeeded a moment later. This mirrors
-    server_state.py's bootstrap_on_startup(), which already does its
-    Google Sheet load synchronously for the same reason."""
+    """Call once at app startup. Non-blocking-ish: does one synchronous
+    attempt (so the very first page load already has real data if the
+    network is up), then hands off to the background timer."""
     persisted_url = _load_persisted_sheet_url()
-    env_url = _clean_env_url(os.environ.get("NEA_SHEET_URL"))
+    env_url = os.environ.get("NEA_SHEET_URL")
     if persisted_url:
         print(f"[NEA DEBUG] Using sheet URL saved via /admin ({persisted_url[:60]}...) — attempting sync.")
-        if env_url and env_url != persisted_url:
-            print(f"[NEA DEBUG] NOTE: NEA_SHEET_URL is ALSO set ({env_url[:60]}...) but is being "
-                  f"IGNORED because a URL saved via /admin takes precedence. If you meant for the "
-                  f"environment variable to take effect, use the 'Clear saved URL' button on /admin.")
     elif env_url:
         print(f"[NEA DEBUG] NEA_SHEET_URL is set ({env_url[:60]}...) — attempting sync.")
     else:
@@ -807,12 +773,15 @@ def bootstrap():
               "deployment, so if the live sync fails and no workbook has been cached/uploaded "
               "yet, the NEA dashboard will have no data to show at all until a sync succeeds.")
 
-    ok = refresh()
-    status = sync_status()
-    if ok:
-        print(f"[NEA DEBUG] Initial sync succeeded: {status['source']} at {status['last_sync']}")
-    else:
-        print(f"[NEA DEBUG] Initial sync FAILED: {status['error']}")
+    def _bootstrap_and_report():
+        ok = refresh()
+        status = sync_status()
+        if ok:
+            print(f"[NEA DEBUG] Initial sync succeeded: {status['source']} at {status['last_sync']}")
+        else:
+            print(f"[NEA DEBUG] Initial sync FAILED: {status['error']}")
+
+    threading.Thread(target=_bootstrap_and_report, daemon=True).start()
 
 
 def start_background_refresh():
@@ -837,36 +806,13 @@ def sync_status() -> dict:
     return {"last_sync": _CACHE["last_sync"], "source": _CACHE["source"], "error": _CACHE["error"]}
 
 
-def sync_status_message() -> str:
-    """One-line, human-readable explanation of why the NEA dashboard /
-    Forecast Lab might currently have no data — meant to be shown
-    directly in the UI (not just server logs), so a sync failure is
-    diagnosable without SSH/log access. Empty string once real data is
-    available and current."""
-    if _CACHE["data"] is not None:
-        return ""
-    if _CACHE["error"]:
-        if has_persisted_sheet_url():
-            src = "the sheet URL saved via /admin"
-        elif os.environ.get("NEA_SHEET_URL"):
-            src = "NEA_SHEET_URL"
-        else:
-            src = "the built-in placeholder sheet (no NEA_SHEET_URL configured)"
-        return f"NEA data sync failed (source: {src}): {_CACHE['error']}"
-    return ("No NEA data has synced yet. This can take a few seconds after "
-            "startup — refresh shortly. If it persists, check the 'NEA Data "
-            "Status' box on /admin.")
-
-
 # ── HTML rendering (template + live data injection) ─────────────────────
 
 def render_dashboard_html() -> str:
     with open(TEMPLATE_PATH, "r", encoding="utf-8") as f:
         template = f.read()
     data_json = json.dumps(get_dashboard_data())
-    status_json = json.dumps({"message": sync_status_message(), **sync_status()})
     html = template.replace("__NEA_DATA_JSON__", data_json)
-    html = html.replace("__NEA_STATUS_JSON__", status_json)
     return html
 def render_forecast_lab_html() -> str:
     """The Forecast Lab page is static HTML/JS — it pulls its parameter
@@ -898,58 +844,37 @@ def _annual_series_from_cache() -> dict:
     """Build the same 8-parameter forecast menu as before, but sourced
     from whatever get_dashboard_data() currently holds (live-synced or
     fallback) rather than a hardcoded snapshot — so the Forecast Lab
-    tracks new fiscal years automatically, same as the main dashboard.
-
-    FIX: this used to index straight into d["annualEnergy"] etc. — if the
-    live sync had never succeeded (sheet not shared, parse error, or
-    simply no sync yet) get_dashboard_data() returns {}, and that direct
-    indexing raised a bare KeyError. Every caller further up
-    (forecast_param_choices() -> the /api/nea-forecast-params route)
-    only catches generic exceptions and turns them into an empty list,
-    so this one KeyError was the actual root cause of the Forecast Lab
-    showing "no forecastable parameters" with no explanation. Reading
-    with .get(..., {}) / .get(..., []) instead means a partially-loaded
-    sheet (e.g. financial tab parsed fine but transmission tab didn't)
-    still shows whatever DID load, instead of the whole menu going
-    blank because of one missing key."""
-    d = get_dashboard_data() or {}
-    ae = d.get("annualEnergy") or {}
-    cg = d.get("consumers") or {}
-    sr = d.get("sales") or {}
-    fin = d.get("financial") or {}
-    sl = d.get("systemLoss") or {}
-    tx = d.get("transmission") or {}
-    ss = d.get("substation") or {}
+    tracks new fiscal years automatically, same as the main dashboard."""
+    d = get_dashboard_data()
+    ae, cg, sr, fin, sl = d["annualEnergy"], d["consumers"], d["sales"], d["financial"], d["systemLoss"]
+    tx, ss = d["transmission"], d["substation"]
 
     def yrs(y_list):
-        return [int(y) for y in (y_list or [])]
+        return [int(y) for y in y_list]
 
     return {
         "totalAvailability": {"label": "Total Energy Availability (MU)", "unit": "MU",
-                               "years": yrs(ae.get("years")), "values": ae.get("total", [])},
+                               "years": yrs(ae["years"]), "values": ae.get("total", [])},
         "nationalPeak": {"label": "National Peak Demand (MW)", "unit": "MW",
-                          "years": yrs(ae.get("years")), "values": ae.get("national_peak", [])},
+                          "years": yrs(ae["years"]), "values": ae.get("national_peak", [])},
         "systemLoss": {"label": "System Loss (%)", "unit": "%",
-                        "years": yrs(sl.get("years")), "values": sl.get("system", [])},
+                        "years": yrs(sl["years"]), "values": sl["system"]},
         "totalConsumers": {"label": "Total Consumers (No.)", "unit": "consumers",
-                            "years": yrs(cg.get("years")), "values": cg.get("total", [])},
+                            "years": yrs(cg["years"]), "values": cg["total"]},
         "totalRevenue": {"label": "Total Gross Revenue (Rs. Million)", "unit": "Rs. Million",
-                          "years": yrs(sr.get("years")), "values": sr.get("total", [])},
+                          "years": yrs(sr["years"]), "values": sr["total"]},
         "profitLoss": {"label": "Profit / Loss (Rs. Million)", "unit": "Rs. Million",
-                        "years": yrs(fin.get("years")), "values": fin.get("profit_loss", [])},
+                        "years": yrs(fin["years"]), "values": fin["profit_loss"]},
         "transmissionTotal": {"label": "Transmission Lines (Circuit Km)", "unit": "Ckt. Km",
-                               "years": None, "fy_labels": tx.get("years"), "values": tx.get("total", [])},
+                               "years": None, "fy_labels": tx["years"], "values": tx["total"]},
         "substationCap": {"label": "Substation Capacity (MVA)", "unit": "MVA",
-                           "years": None, "fy_labels": ss.get("years"), "values": ss.get("capacity", [])},
+                           "years": None, "fy_labels": ss["years"], "values": ss["capacity"]},
     }
 
 
 def _monthly_series_from_cache() -> dict:
-    """Same defensive-read fix as _annual_series_from_cache() above —
-    see that docstring for why direct dict indexing here was the root
-    cause of the Forecast Lab's empty parameter menu."""
-    d = get_dashboard_data() or {}
-    eb = d.get("energyBalanceMonthly") or {}
+    d = get_dashboard_data()
+    eb = d["energyBalanceMonthly"]
     fy_order = sorted(eb.keys())  # chronological if FY strings sort correctly
     labels, values = [], []
     for fy in fy_order:
@@ -966,25 +891,30 @@ def _monthly_series_from_cache() -> dict:
 
 
 def _viable_models_for_values(x_hist, values, monthly, season_length=12):
-    """Which models can actually be fit to THIS parameter's specific
-    history — tested directly against the real (already-cleaned) data,
-    no fallback. Used to build the Model dropdown per-parameter, so a
-    short or non-seasonal series never offers a model (e.g. SARIMA on
-    an 8-point annual series) that's guaranteed to fail or spike; only
-    genuinely loadable models are listed. Linear Regression is always
-    included — it only needs 2 distinct points and is the universal
-    fallback used elsewhere too."""
-    candidates = ["linear", "holt", "moving", "arima", "hybrid"] + (["sarima"] if monthly else [])
-    ok = []
-    for m in candidates:
-        try:
-            pred, _meta, _lo, _hi, _fitted = _fit_one_model(m, x_hist, values, 1, monthly, season_length)
-        except Exception:
-            continue
-        if m == "linear" or _is_reasonable_forecast(values, pred):
-            ok.append(m)
-    if "linear" not in ok:
-        ok.append("linear")
+    """Which models are worth offering for THIS parameter's specific
+    history. This is a FAST length-based heuristic, not a real fit —
+    actually fitting every candidate model (ARIMA/SARIMA in particular
+    do a multi-combination grid search) for every parameter on every
+    Forecast Lab page load was far too slow and could time out the
+    params endpoint entirely, leaving the dropdowns empty. The real
+    protection against a model that fails or spikes on this specific
+    data is the automatic fallback chain + spike guard already built
+    into _run_single_model(), which only runs once, when the person
+    actually clicks Run Forecast — this function just keeps obviously
+    hopeless choices (e.g. SARIMA on an 8-point annual series) off the
+    menu to begin with. Linear Regression is always included — it
+    only needs 2 distinct points and can't diverge."""
+    n = len(values)
+    ok = ["linear"]
+    if n >= 3:
+        ok.append("moving")
+    if n >= 4:
+        ok.append("holt")
+    if n >= 6:
+        ok.append("arima")
+        ok.append("hybrid")
+    if monthly and n >= season_length * 2:
+        ok.append("sarima")
     return ok
 
 
@@ -1614,19 +1544,19 @@ def unit_economics():
     import/export that year) are skipped for that rate rather than
     shown as a bogus 0.00 or a divide-by-zero.
     """
-    d = get_dashboard_data() or {}
-    fin, ae = (d.get("financial") or {}), (d.get("annualEnergy") or {})
-    avail_by_year = dict(zip(ae.get("years", []), ae.get("total", [])))
-    revenue_by_year = dict(zip(fin.get("years", []), fin.get("revenue", [])))
+    d = get_dashboard_data()
+    fin, ae = d["financial"], d["annualEnergy"]
+    avail_by_year = dict(zip(ae["years"], ae.get("total", [])))
+    revenue_by_year = dict(zip(fin["years"], fin["revenue"]))
 
     out = {"fy": [], "import_rate_rs_per_unit": [], "export_rate_rs_per_unit": [],
            "avg_revenue_rate_rs_per_unit": []}
-    for i, y in enumerate(fin.get("years", [])):
+    for i, y in enumerate(fin["years"]):
         out["fy"].append(y)
-        imp_mu = fin.get("import_mu", [])[i] if i < len(fin.get("import_mu", [])) else None
-        exp_mu = fin.get("export_mu", [])[i] if i < len(fin.get("export_mu", [])) else None
-        imp_rs = fin.get("import_rs", [])[i] if i < len(fin.get("import_rs", [])) else None
-        exp_rs = fin.get("export_rs", [])[i] if i < len(fin.get("export_rs", [])) else None
+        imp_mu = fin["import_mu"][i] if i < len(fin["import_mu"]) else None
+        exp_mu = fin["export_mu"][i] if i < len(fin["export_mu"]) else None
+        imp_rs = fin["import_rs"][i] if i < len(fin["import_rs"]) else None
+        exp_rs = fin["export_rs"][i] if i < len(fin["export_rs"]) else None
         out["import_rate_rs_per_unit"].append(round(imp_rs / imp_mu, 2) if imp_mu else None)
         out["export_rate_rs_per_unit"].append(round(exp_rs / exp_mu, 2) if exp_mu else None)
         avail = avail_by_year.get(y)
