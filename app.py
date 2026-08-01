@@ -748,9 +748,6 @@ def sidebar():
                     dcc.Download(id="download-pdf"),
                 ],
             ),
-            html.Div("Generating the report (now including NEA operational charts) can take "
-                     "up to a minute — please keep this tab open until the download starts.",
-                     className="small text-muted mt-1"),
         ]),
         className="shadow-sm",
     )
