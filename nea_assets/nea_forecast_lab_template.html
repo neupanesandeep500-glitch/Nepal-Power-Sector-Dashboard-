@@ -132,6 +132,15 @@
  *
  * All model fitting (Linear/Holt/Moving-Average/ARIMA/SARIMA/Hybrid) happens
  * server-side with statsmodels — this file only renders what the API returns.
+ *
+ * NOTE: the "spike at the history→forecast join" issue is fixed entirely on
+ * the server side (NEA.py's _run_single_model continuity correction, which
+ * now anchors each candidate forecast's FIRST point to the last real
+ * observation instead of to the model's internal fitted level). Nothing in
+ * this file needed to change for that fix — it only ever renders whatever
+ * past_values/pred_values (or, for composites, reported_past_values/
+ * aggregate.pred_values) the API returns, and those now already join up
+ * cleanly.
  * ============================================================================= */
 
 const STYLE = __NEA_STYLE_JSON__;
