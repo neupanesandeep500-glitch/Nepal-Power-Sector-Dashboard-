@@ -72,7 +72,7 @@ _SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 # (https-github-com-neupanesandee@seismic-rarity-503315-i5.iam.gserviceaccount.com).
 # Still overridable via env var if you ever point this at a different
 # sheet without a code change.
-_SHEET_ID = os.environ.get("VISITOR_SHEET_ID", "1KbNdAqGUrNVa44FJrTo4q0h8kHQ-4Dpsp_Uovg8PVvk")
+_SHEET_ID = os.environ.get("VISITOR_SHEET_ID", "https://docs.google.com/spreadsheets/d/1KbNdAqGUrNVa44FJrTo4q0h8kHQ-4Dpsp_Uovg8PVvk/edit?usp=sharing")
 _WORKSHEET_NAME = os.environ.get("VISITOR_SHEET_TAB", "Website Visitor Counter")
 FLUSH_INTERVAL_SECONDS = float(os.environ.get("VISITOR_FLUSH_INTERVAL", "60"))
 
