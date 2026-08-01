@@ -1227,51 +1227,64 @@ def _run_single_model(model: str, x_hist, values, n_ahead: int, monthly: bool, s
     Regression — which only needs 2 distinct points and can't diverge
     — so every parameter always produces *some* forecast rather than
     an error or a wild spike. meta['requested_model'] /
-    meta['fallback_used'] record when this happened."""
+    meta['fallback_used'] record when this happened.
+
+    CONTINUITY CORRECTION: Holt/ARIMA/SARIMA forecast forward from
+    their own internal smoothed level, not from the raw last actual
+    observation. When that internal level doesn't exactly match the
+    last real data point (e.g. a volatile last year), the forecast
+    trajectory is still internally consistent, but the *chart* — which
+    draws the raw history line up to the real base value and then
+    starts the forecast line — shows an artificial jump right at the
+    forecast start, even though nothing is actually wrong with the
+    model. Each candidate is anchored to the last real observation by
+    shifting every predicted (and CI) point by the model's own last
+    in-sample residual, so the forecast line always leaves from
+    exactly where the history line ends. This shift is applied BEFORE
+    the spike check, not after — a model can look smooth in its own
+    internal reference frame yet still need a large shift to line up
+    with reality, and that shift lands entirely on the first forecast
+    step, which is exactly the join the chart draws. Checking only the
+    raw, pre-shift forecast let that shift through unvalidated, which
+    is what produced a year-1 spike that then settled back down: the
+    candidate passed the check before its correction, not after."""
     chain = [model] + [m for m in _MODEL_FALLBACK_CHAIN if m != model]
     pred = meta = fitted = None
     lo, hi = [], []
     last_err = None
+    last_actual = values[-1] if len(values) else None
     for m in chain:
         try:
-            pred, meta, lo, hi, fitted = _fit_one_model(m, x_hist, values, n_ahead, monthly, season_length)
+            cand_pred, cand_meta, cand_lo, cand_hi, cand_fitted = _fit_one_model(
+                m, x_hist, values, n_ahead, monthly, season_length)
         except Exception as e:
             last_err = e
             continue
-        if m == "linear" or _is_reasonable_forecast(values, pred):
+
+        # Anchor this candidate to the last real observation first...
+        last_fitted = cand_fitted[-1] if cand_fitted else None
+        if last_actual is not None and last_fitted is not None:
+            try:
+                offset = float(last_actual) - float(last_fitted)
+            except (TypeError, ValueError):
+                offset = 0.0
+            if offset:
+                cand_pred = [p + offset for p in cand_pred]
+                if cand_lo:
+                    cand_lo = [v + offset for v in cand_lo]
+                if cand_hi:
+                    cand_hi = [v + offset for v in cand_hi]
+
+        # ...THEN judge whether it's reasonable — this is what actually
+        # gets drawn, so this is what needs to clear the spike check.
+        if m == "linear" or _is_reasonable_forecast(values, cand_pred):
+            pred, meta, lo, hi, fitted = cand_pred, cand_meta, cand_lo, cand_hi, cand_fitted
             if m != model:
                 meta = {**meta, "requested_model": model, "fallback_used": m}
             break
     else:
         raise last_err or ValueError(f"Could not fit any forecasting model for this parameter.")
 
-    # ── CONTINUITY CORRECTION ───────────────────────────────────────
-    # Holt/ARIMA/SARIMA forecast forward from their own internal
-    # smoothed level, not from the raw last actual observation. When
-    # that internal level doesn't exactly match the last real data
-    # point (e.g. a volatile last year), the forecast trajectory is
-    # still internally consistent, but the *chart* — which draws the
-    # raw history line up to the real base value and then starts the
-    # forecast line — shows an artificial jump right at the forecast
-    # start, even though nothing is actually wrong with the model.
-    # Anchor the whole forecast to the last real observation by
-    # shifting every predicted (and CI) point by the model's own
-    # last in-sample residual, so the forecast line always leaves
-    # from exactly where the history line ends — the forecast's
-    # first point joins the base value with no jump.
-    last_actual = values[-1] if len(values) else None
-    last_fitted = fitted[-1] if fitted else None
-    if last_actual is not None and last_fitted is not None:
-        try:
-            offset = float(last_actual) - float(last_fitted)
-        except (TypeError, ValueError):
-            offset = 0.0
-        if offset:
-            pred = [p + offset for p in pred]
-            if lo:
-                lo = [v + offset for v in lo]
-            if hi:
-                hi = [v + offset for v in hi]
     return pred, meta, lo, hi, fitted
 
 
