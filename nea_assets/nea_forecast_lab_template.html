@@ -400,10 +400,27 @@ function renderComposite(data) {
     // exactly what produced a visible spike right at the history/forecast
     // seam. base_value is computed backend-side from the same components
     // agg_pred is anchored to, so this join is continuous by construction.
-    const baseVal = data.aggregate.base_value;
-    const bridge = (baseVal !== undefined && baseVal !== null)
-      ? baseVal
-      : (reported.length ? reported[reported.length - 1] : aggPred[0]);
+        // Bridge from the sum of each component's last actual value.
+    // This guarantees the forecast line starts exactly at the top of the
+    // historical stack and removes the spike caused by the separately-
+    // reported Total column (which counts extra sources).
+    let bridge = 0;
+    data.components.forEach(c => {
+      if (c.past_values && c.past_values.length) {
+        bridge += c.past_values[c.past_values.length - 1];
+      }
+    });
+    // Only fall back to reported total if something went wrong above
+    if ((!bridge && bridge !== 0) && data.aggregate.base_value != null) {
+      bridge = data.aggregate.base_value;
+    }
+    if ((!bridge && bridge !== 0) && reported.length) {
+      bridge = reported[reported.length - 1];
+    }
+    if (!bridge && bridge !== 0) {
+      bridge = aggPred[0];
+    }
+
     const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
     datasets.push({
       type: "line", label: "Forecast Total (sum of components)",
