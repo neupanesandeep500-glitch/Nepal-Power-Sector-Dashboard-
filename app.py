@@ -412,9 +412,15 @@ def nea_forecast_lab_page():
 def api_nea_forecast_params():
     from flask import jsonify
     try:
-        return jsonify(NEA.forecast_param_choices())
+        params = NEA.forecast_param_choices()
     except Exception as e:
-        return jsonify([]), 200
+        # FIX: previously swallowed silently (no traceback, no reason
+        # given to the caller) — the Forecast Lab just showed an empty
+        # dropdown with no explanation. Now logged AND the real reason
+        # is returned to the frontend via `message`.
+        traceback.print_exc()
+        params = []
+    return jsonify({"params": params, "message": NEA.sync_status_message()})
 
 
 @server.route("/api/nea-forecast", methods=["POST"])
@@ -438,9 +444,11 @@ def api_nea_forecast():
 def api_nea_forecast_composite_params():
     from flask import jsonify
     try:
-        return jsonify(NEA.composite_param_choices())
+        params = NEA.composite_param_choices()
     except Exception as e:
-        return jsonify([]), 200
+        traceback.print_exc()
+        params = []
+    return jsonify({"params": params, "message": NEA.sync_status_message()})
 
 
 @server.route("/api/nea-forecast-composite", methods=["POST"])
