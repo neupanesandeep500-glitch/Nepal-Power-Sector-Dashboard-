@@ -740,14 +740,12 @@ def sidebar():
                 ], item_id="grp-search"),
             ]),
             html.Hr(),
-            dcc.Loading(
-                type="dot", color="#c62828",
-                children=[
-                    dbc.Button([html.I(className="bi bi-file-earmark-pdf me-1"), "Download PDF Report"],
-                               id="btn-pdf", color="danger", outline=True, size="sm", className="w-100"),
-                    dcc.Download(id="download-pdf"),
-                ],
-            ),
+            html.Div([
+                html.I(className="bi bi-file-earmark-pdf me-1"),
+                "Need a PDF report? Head over to the ",
+                html.Strong("📄 Generate Report"),
+                " tab — it picks up whatever filters you've set here.",
+            ], className="small text-muted"),
         ]),
         className="shadow-sm",
     )
@@ -810,6 +808,7 @@ app.layout = dbc.Container(fluid=True, children=[
         dbc.Tab(label="🏭 System Operational Performance", tab_id="nea_operational"),
         dbc.Tab(label="🔬 NEA Forecast Lab", tab_id="nea_forecast"),
         dbc.Tab(label="🎨 Custom Style", tab_id="custom"),
+        dbc.Tab(label="📄 Generate Report", tab_id="reports"),
     ]),
 
     dbc.Row(className="mt-3", children=[
@@ -1212,6 +1211,13 @@ def render_tab(tab, f_type, f_status, f_province, f_capacity, f_tx_length, f_yea
         return (html.Iframe(src=f"/nea-forecast-lab?v={style_v}",
                              style={"width": "100%", "height": "900px", "border": "none"}),
                 gis_controls_style, sidebar_style, sidebar_md, content_md)
+
+    # Reports tab: just an options panel + a button — doesn't need license
+    # data loaded or a non-empty filtered set to be worth showing, so it's
+    # dispatched here rather than after the data-availability gate below
+    # (the "Generate Report" button itself still checks for data at click time).
+    if tab == "reports":
+        return (render_reports_tab(), gis_controls_style, sidebar_style, sidebar_md, content_md)
 
     if loader is None or loader.error or not loader.records:
         err_detail = (loader.error if (loader and loader.error) else STATE.get("error"))
@@ -3621,6 +3627,95 @@ def reset_custom_style(n_clicks):
     return (
         "default", "group", "bar", "Arial", 16, 12, ["show"], ["animate"], ["show"], feedback
     )
+# ── REPORTS TAB ──────────────────────────────────────────────────────────────
+# Section checkboxes on the Reports tab map straight to these values, which
+# download_pdf() below checks before adding each section's charts — so
+# picking a subset of sections here is what actually shortens/lengthens the
+# generated PDF, not just a cosmetic list.
+REPORT_SECTION_OPTIONS = [
+    {"label": " Power Plants & Transmission Lines", "value": "plants_tx"},
+    {"label": " GoN Studied Projects", "value": "gon_study"},
+    {"label": " License Cancelled Projects", "value": "cancelled"},
+    {"label": " Growth Trends (by year)", "value": "growth"},
+    {"label": " NEA Operational Data (generation, consumers, revenue, forecasts)", "value": "nea"},
+]
+REPORT_SECTION_DEFAULT = [o["value"] for o in REPORT_SECTION_OPTIONS]
+
+
+def render_reports_tab():
+    """The 'Generate Report' main tab. Previously this was a small button
+    tucked into the filter sidebar — which meant it only ever showed up on
+    the License Status / License Insights tabs, since the sidebar itself is
+    hidden everywhere else. Giving it a proper tab makes it reachable from
+    anywhere, gives the report some breathing room to explain what it
+    contains, and gives report-generation a real "please wait" status
+    instead of a small spinner dot next to the button."""
+    return html.Div([
+        html.H4("📄 Generate a Report", className="mb-2"),
+        html.P(
+            "Builds a condensed, presentation-ready PDF — a cover page followed by "
+            "roughly a dozen pages of charts, 2–4 to a page — covering whichever "
+            "sections you select below.",
+            className="text-muted mb-4",
+        ),
+        dbc.Row([
+            dbc.Col(md=7, children=[
+                dbc.Card(className="shadow-sm mb-3", children=dbc.CardBody([
+                    html.H5("Sections to include", className="card-title mb-3"),
+                    dbc.Checklist(
+                        id="report-sections",
+                        options=REPORT_SECTION_OPTIONS,
+                        value=REPORT_SECTION_DEFAULT,
+                        className="mb-1",
+                    ),
+                    html.Div(
+                        "Power Plant / Transmission sections respect whatever filters "
+                        "are currently set on the License Status and License Insights tabs "
+                        "(type, stage, province, dates, search, etc.) — leave those tabs' "
+                        "filters at their defaults for a full, unfiltered report.",
+                        className="text-muted small mt-2",
+                    ),
+                ])),
+            ]),
+            dbc.Col(md=5, children=[
+                dbc.Card(className="shadow-sm", children=dbc.CardBody([
+                    html.H5("Generate", className="card-title mb-3"),
+                    dcc.Loading(
+                        id="report-loading", type="circle", color="#c62828",
+                        children=[
+                            dbc.Button(
+                                [html.I(className="bi bi-file-earmark-pdf-fill me-2"),
+                                 "Generate PDF Report"],
+                                id="btn-pdf", color="danger", size="lg", className="w-100",
+                            ),
+                            dcc.Download(id="download-pdf"),
+                        ],
+                    ),
+                    html.Div(id="report-status", className="mt-3 small"),
+                ])),
+            ]),
+        ]),
+    ])
+
+
+# Fires the instant "please wait" status the moment the button is clicked —
+# client-side, so it appears immediately rather than after the (potentially
+# many-second) server-side PDF build finishes. download_pdf() below overwrites
+# this same report-status text with the final result once it's done.
+app.clientside_callback(
+    """
+    function(n_clicks) {
+        if (!n_clicks) { return window.dash_clientside.no_update; }
+        return "⏳ Your report is being generated — this can take up to a minute "
+             + "depending on how much data is included. Please don't close this tab.";
+    }
+    """,
+    Output("report-status", "children", allow_duplicate=True),
+    Input("btn-pdf", "n_clicks"),
+    prevent_initial_call=True,
+)
+
+
 # ── PDF REPORT: PAGE-BUILDING HELPERS ───────────────────────────────────────
 _PDF_FOOTER = "Er. Sandeep Neupane  |  www.neupanesandeep.com.np"
 
@@ -3904,6 +3999,7 @@ def _nea_report_chart_specs():
 # ── PDF REPORT ─────────────────────────────────────────────────────────────
 @app.callback(
     Output("download-pdf", "data"),
+    Output("report-status", "children", allow_duplicate=True),
     Input("btn-pdf", "n_clicks"),
     State("f-type", "value"), State("f-status", "value"), State("f-province", "value"),
     State("f-capacity", "value"), State("f-tx-length", "value"), State("f-year", "data"),
@@ -3911,18 +4007,27 @@ def _nea_report_chart_specs():
     State("f-date-from", "value"), State("f-date-to", "value"),
     State("f-cod-from", "value"), State("f-cod-to", "value"),
     State("f-district", "value"), State("f-local", "value"),
+    State("report-sections", "value"),
     prevent_initial_call=True,
 )
 def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length, f_year, f_search,
-                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_district, f_local):
+                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_district, f_local, sections):
+    # Guard against a first click before the checklist has hydrated a value.
+    sections = sections if sections is not None else REPORT_SECTION_DEFAULT
+
     loader = STATE["loader"]
     if loader is None or not loader.records:
-        return None
+        return None, dbc.Alert(
+            "⚠️ Project data isn't loaded yet, so there's nothing to put in a report "
+            "right now. Please try again in a moment.", color="warning", dismissable=True)
     recs = get_filtered_records(f_type, f_status, f_province, f_capacity, f_year, f_search,
                                  f_date_from, f_date_to, f_cod_from, f_cod_to, f_tx_length,
                                  f_district, f_local)
     if not recs:
-        return None
+        return None, dbc.Alert(
+            "⚠️ No projects match the filters currently set on License Status / "
+            "License Insights, so the report would be empty. Clear or adjust those "
+            "filters and try again.", color="warning", dismissable=True)
     active_recs = [r for r in recs if r["status"] not in de.EXTRA_STATUS_ORDER]
     plant_recs = [r for r in active_recs if r["type"] != "Transmission Line"]
     tx_recs = [r for r in active_recs if r["type"] == "Transmission Line"]
@@ -3942,79 +4047,80 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
         _pdf_cover_page(pdf, recs, STATE.get("source_label", "—"), filter_summary)
 
         # ── Power Plants ─────────────────────────────────────────────
-        by_type = defaultdict(float)
-        for r in plant_recs:
-            by_type[r["type"]] += r["capacity_mw"] or 0
-        types_ = list(by_type.keys())
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Power Plants — Capacity by Type",
-            categories=types_, values=[by_type[t] for t in types_],
-            colors=[get_type_colors().get(t, "#607d8b") for t in types_],
-            y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
-        )))
+        if "plants_tx" in sections:
+            by_type = defaultdict(float)
+            for r in plant_recs:
+                by_type[r["type"]] += r["capacity_mw"] or 0
+            types_ = list(by_type.keys())
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Power Plants — Capacity by Type",
+                categories=types_, values=[by_type[t] for t in types_],
+                colors=[get_type_colors().get(t, "#607d8b") for t in types_],
+                y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
+            )))
 
-        by_status_count = defaultdict(int)
-        for r in recs:
-            by_status_count[r["status"]] += 1
-        chart_specs.append((_draw_pie, dict(
-            title="License Stage Breakdown — All Records",
-            labels=list(by_status_count.keys()), values=list(by_status_count.values()),
-            colors=[get_status_colors().get(s, "#90a4ae") for s in by_status_count],
-        )))
+            by_status_count = defaultdict(int)
+            for r in recs:
+                by_status_count[r["status"]] += 1
+            chart_specs.append((_draw_pie, dict(
+                title="License Stage Breakdown — All Records",
+                labels=list(by_status_count.keys()), values=list(by_status_count.values()),
+                colors=[get_status_colors().get(s, "#90a4ae") for s in by_status_count],
+            )))
 
-        stage_totals_p, _ = compute_breakdown(plant_recs, "status")
-        stages_p = [s for s in STAGE_DISPLAY_ORDER if s in stage_totals_p]
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Power Plants — Capacity (MW) by License Stage",
-            categories=stages_p, values=[stage_totals_p[s][1] for s in stages_p],
-            colors=[get_status_colors().get(s, "#90a4ae") for s in stages_p],
-            y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
-        )))
+            stage_totals_p, _ = compute_breakdown(plant_recs, "status")
+            stages_p = [s for s in STAGE_DISPLAY_ORDER if s in stage_totals_p]
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Power Plants — Capacity (MW) by License Stage",
+                categories=stages_p, values=[stage_totals_p[s][1] for s in stages_p],
+                colors=[get_status_colors().get(s, "#90a4ae") for s in stages_p],
+                y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
+            )))
 
-        prov_totals_p, _ = compute_breakdown(plant_recs, "province")
-        provs_p = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals_p] + \
-                  [p for p in prov_totals_p if p not in PROVINCE_DISPLAY_ORDER]
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Power Plants — Capacity (MW) by Province",
-            categories=provs_p, values=[prov_totals_p[p][1] for p in provs_p],
-            colors=[get_province_colors().get(p, "#455a64") for p in provs_p],
-            y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
-        )))
+            prov_totals_p, _ = compute_breakdown(plant_recs, "province")
+            provs_p = [p for p in PROVINCE_DISPLAY_ORDER if p in prov_totals_p] + \
+                      [p for p in prov_totals_p if p not in PROVINCE_DISPLAY_ORDER]
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Power Plants — Capacity (MW) by Province",
+                categories=provs_p, values=[prov_totals_p[p][1] for p in provs_p],
+                colors=[get_province_colors().get(p, "#455a64") for p in provs_p],
+                y_label="Capacity (MW)", cum_label="Cumulative Capacity (MW)",
+            )))
 
-        # ── Transmission Lines ───────────────────────────────────────
-        tx_stage_km = defaultdict(float)
-        for r in tx_recs:
-            tx_stage_km[r["status"]] += r["line_length_km"] or 0
-        stages_tx = [s for s in STAGE_DISPLAY_ORDER if s in tx_stage_km]
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Transmission Lines — Length (KM) by License Stage",
-            categories=stages_tx, values=[tx_stage_km[s] for s in stages_tx],
-            colors=[get_status_colors().get(s, "#90a4ae") for s in stages_tx],
-            y_label="Length (KM)", cum_label="Cumulative Length (KM)",
-        )))
+            # ── Transmission Lines ───────────────────────────────────
+            tx_stage_km = defaultdict(float)
+            for r in tx_recs:
+                tx_stage_km[r["status"]] += r["line_length_km"] or 0
+            stages_tx = [s for s in STAGE_DISPLAY_ORDER if s in tx_stage_km]
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Transmission Lines — Length (KM) by License Stage",
+                categories=stages_tx, values=[tx_stage_km[s] for s in stages_tx],
+                colors=[get_status_colors().get(s, "#90a4ae") for s in stages_tx],
+                y_label="Length (KM)", cum_label="Cumulative Length (KM)",
+            )))
 
-        by_volt = defaultdict(float)
-        by_volt_count = defaultdict(int)
-        for r in tx_recs:
-            if r["voltage_kv"]:
-                by_volt[r["voltage_kv"]] += r["line_length_km"] or 0
-                by_volt_count[r["voltage_kv"]] += 1
-        volts = sorted(by_volt)
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Transmission Lines — Length (KM) by Voltage Class",
-            categories=[f"{v:.0f} kV" for v in volts], values=[by_volt[v] for v in volts],
-            colors=["#6a1b9a"] * len(volts), y_label="Length (KM)", cum_label="Cumulative Length (KM)",
-        )))
-        volts_cmp = sorted(by_volt_count)
-        chart_specs.append((_draw_bar_cum, dict(
-            title="Transmission Lines — Project Count by Voltage Class",
-            categories=[f"{v:.0f} kV" for v in volts_cmp], values=[by_volt_count[v] for v in volts_cmp],
-            colors=["#6a1b9a"] * len(volts_cmp), y_label="Number of Projects",
-            cum_label="Cumulative Projects", value_fmt="{:,.0f}",
-        )))
+            by_volt = defaultdict(float)
+            by_volt_count = defaultdict(int)
+            for r in tx_recs:
+                if r["voltage_kv"]:
+                    by_volt[r["voltage_kv"]] += r["line_length_km"] or 0
+                    by_volt_count[r["voltage_kv"]] += 1
+            volts = sorted(by_volt)
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Transmission Lines — Length (KM) by Voltage Class",
+                categories=[f"{v:.0f} kV" for v in volts], values=[by_volt[v] for v in volts],
+                colors=["#6a1b9a"] * len(volts), y_label="Length (KM)", cum_label="Cumulative Length (KM)",
+            )))
+            volts_cmp = sorted(by_volt_count)
+            chart_specs.append((_draw_bar_cum, dict(
+                title="Transmission Lines — Project Count by Voltage Class",
+                categories=[f"{v:.0f} kV" for v in volts_cmp], values=[by_volt_count[v] for v in volts_cmp],
+                colors=["#6a1b9a"] * len(volts_cmp), y_label="Number of Projects",
+                cum_label="Cumulative Projects", value_fmt="{:,.0f}",
+            )))
 
         # ── GoN Studied Projects ─────────────────────────────────────
-        gon_recs = [r for r in recs if r["status"] == "GoN Study Project"]
+        gon_recs = [r for r in recs if r["status"] == "GoN Study Project"] if "gon_study" in sections else []
         if gon_recs:
             by_type_g, _ = compute_breakdown(gon_recs, "type")
             types_g = [t for t in de.TYPE_ORDER if t in by_type_g] + \
@@ -4036,7 +4142,7 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
             )))
 
         # ── License Cancelled ────────────────────────────────────────
-        canc_recs = [r for r in recs if r["status"] == "Cancelled"]
+        canc_recs = [r for r in recs if r["status"] == "Cancelled"] if "cancelled" in sections else []
         if canc_recs:
             by_type_c, _ = compute_breakdown(canc_recs, "type")
             types_c = [t for t in de.TYPE_ORDER if t in by_type_c] + \
@@ -4058,7 +4164,7 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
             )))
 
         # ── Growth Trends ────────────────────────────────────────────
-        plant_series = loader.yearly_series(plant_recs, key_field="type")
+        plant_series = loader.yearly_series(plant_recs, key_field="type") if "growth" in sections else {}
         plant_years = sorted(plant_series.keys())
         if plant_years:
             all_plant_types = sorted({k for y in plant_years for k in plant_series[y].keys()})
@@ -4087,7 +4193,7 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
                 y_label="Number of Projects",
             )))
 
-        tx_series = loader.yearly_series(tx_recs, key_field="status")
+        tx_series = loader.yearly_series(tx_recs, key_field="status") if "growth" in sections else {}
         tx_years = sorted(tx_series.keys())
         if tx_years:
             all_tx_statuses = sorted({k for y in tx_years for k in tx_series[y].keys()})
@@ -4112,11 +4218,14 @@ def download_pdf(n_clicks, f_type, f_status, f_province, f_capacity, f_tx_length
             )))
 
         # ── NEA Operational Data ─────────────────────────────────────
-        chart_specs.extend(_nea_report_chart_specs())
+        if "nea" in sections:
+            chart_specs.extend(_nea_report_chart_specs())
 
         _pdf_render_batches(pdf, chart_specs, per_page=3)
 
-    return dcc.send_file(path)
+    return dcc.send_file(path), dbc.Alert(
+        "✅ Your report is ready — the download has started.",
+        color="success", dismissable=True)
 
 
 @server.route("/sitemap.xml")
