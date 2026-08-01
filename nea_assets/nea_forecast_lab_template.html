@@ -393,7 +393,17 @@ function renderComposite(data) {
   // produced one (currently: arima/sarima)
   const aggPred = data.aggregate.pred_values || [];
   if (aggPred.length) {
-    const bridge = reported.length ? reported[reported.length - 1] : null;
+    // Bridge from the sum of the components' own last actual values, not
+    // the separately-reported Total column — the two aren't guaranteed to
+    // match (different definition, rounding, an extra source not broken
+    // out as its own component), and bridging from a mismatched Total was
+    // exactly what produced a visible spike right at the history/forecast
+    // seam. base_value is computed backend-side from the same components
+    // agg_pred is anchored to, so this join is continuous by construction.
+    const baseVal = data.aggregate.base_value;
+    const bridge = (baseVal !== undefined && baseVal !== null)
+      ? baseVal
+      : (reported.length ? reported[reported.length - 1] : aggPred[0]);
     const sumLine = Array(nPast - 1).fill(null).concat([bridge]).concat(aggPred);
     datasets.push({
       type: "line", label: "Forecast Total (sum of components)",
