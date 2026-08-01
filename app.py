@@ -48,6 +48,7 @@ import coordinate_transform as ct
 import gis_leaflet_map
 from admin import admin_bp
 import NEA
+import visitor_counter
 
 import matplotlib
 matplotlib.use("Agg")  # headless backend — must be set before pyplot is imported anywhere
@@ -398,6 +399,14 @@ ss.start_background_refresh()
 NEA.bootstrap()
 NEA.start_background_refresh()
 
+# Visitor counter: own Google Sheet (via a service-account), own
+# background flush — pulls the last-saved count in, then persists new
+# visits back out every VISITOR_FLUSH_INTERVAL seconds so it survives
+# redeploys. Never blocks/crashes startup if the sheet is unreachable.
+visitor_counter.bootstrap()
+visitor_counter.start_background_flush()
+visitor_counter.record_deploy()
+
 STATE = ss.STATE
 
 
@@ -491,8 +500,8 @@ def api_visitor_count():
     try:
         if not flask_session.get("counted_visit"):
             flask_session["counted_visit"] = True
-            ss.bump_visitor_count()
-        return jsonify(count=ss.get_visitor_count())
+            visitor_counter.increment()
+        return jsonify(count=visitor_counter.get_count())
     except Exception as e:
         return jsonify(count=0, error=str(e))
 
