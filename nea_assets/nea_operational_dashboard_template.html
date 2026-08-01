@@ -463,10 +463,9 @@ function init() {
 
 if (!DATA || Object.keys(DATA).length === 0) {
   document.getElementById("nea-content").innerHTML =
-    '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is loaded yet. ' +
-    'See the status badge above for the specific sync error. An administrator needs to fix that ' +
-    "(usually the sheet's sharing setting, the NEA_SHEET_URL value, or a tab name mismatch) and wait " +
-    'for the next background sync, or restart the app.</div>';
+    '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is available ' +
+    'right now. Please check back shortly, or refer to NEA\'s official reports at ' +
+    '<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>.</div>';
 } else {
   init();
 }
