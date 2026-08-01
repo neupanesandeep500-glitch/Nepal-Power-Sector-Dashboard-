@@ -35,23 +35,10 @@
   .nea-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:10px; font-size:13px; font-weight:600; color:#37474f; }
   .nea-footnote { font-size:11px; color:#8592ab; margin-top:8px; }
   .nea-error { background:#fdecea; color:#a72820; border:1px solid #f5c2be; border-radius:8px; padding:12px 16px; font-size:13px; }
-  .nea-disclaimer { background:#eef3fb; color:#37425a; border:1px solid #d3dff2; border-radius:8px;
-    padding:10px 14px; font-size:12px; line-height:1.5; margin-bottom:14px; display:flex; gap:8px; align-items:flex-start; }
-  .nea-disclaimer i { color:#0d47a1; margin-top:2px; }
-  .nea-disclaimer a { color:#0d47a1; font-weight:600; }
-  .nea-disclaimer strong { color:#1b2a4a; }
 </style>
 </head>
 <body>
 <div class="nea-wrap">
-  <div class="nea-disclaimer">
-    <i class="fas fa-circle-info"></i>
-    <span><strong>Disclaimer:</strong> Figures shown here are extracted from NEA's published Annual
-    Report (<a href="https://www.nea.org.np" target="_blank" rel="noopener">www.nea.org.np</a>) and are
-    provided for study and informational purposes only. This is an independent, unofficial resource —
-    not affiliated with or endorsed by NEA. Please verify all figures against NEA's official
-    publications before relying on them for any decision-making.</span>
-  </div>
   <div id="nea-content">
 
   <div class="nea-subtabs-nav" id="nea-category-tabs" role="tablist">
@@ -139,12 +126,41 @@
   </div>
 </div>
 
+<div class="nea-disclaimer" style="max-width:1180px; margin:16px auto 0; padding:14px 18px;
+     background:#fff; border-radius:12px; box-shadow:0 1px 4px rgba(20,30,60,0.08);">
+  <p style="font-size:11.5px; color:#8894a8; margin:0 0 6px;">
+    <strong style="color:#647085;">Disclaimer:</strong>
+    The figures on this page — including peak demand, system loss, energy balance,
+    consumers, revenue, and related operational metrics — are compiled from data
+    published by the Nepal Electricity Authority (<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>).
+  </p>
+  <p style="font-size:11.5px; color:#8894a8; margin:0;">
+    This is an independent, unofficial platform intended only to give a general
+    overview of NEA's operational performance; it is not affiliated with or endorsed
+    by NEA. While reasonable care has been taken in processing this data, we do not
+    guarantee its accuracy, completeness, or currency, and accept no liability for
+    errors, omissions, or any decisions made based on it.
+  </p>
+</div>
+
 <script>
 const DATA = __NEA_DATA_JSON__;
-const NEA_STATUS = __NEA_STATUS_JSON__;
-const PALETTE = ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
+const STYLE = __NEA_STYLE_JSON__;
+const PALETTE = (STYLE.palette && STYLE.palette.length) ? STYLE.palette :
+  ["#4e79a7","#f28e2b","#59a14f","#edc948","#b07aa1","#76b7b2","#e15759","#9c755f","#bab0ac","#ff9da7"];
 const PEAK_SYSTEM_COLOR = "#212121";
 const PEAK_NATIONAL_COLOR = "#d500f9";
+
+// Custom Style tab settings (font/grid/animation) applied globally — the
+// same settings that drive the license charts elsewhere in the app.
+// Per-metric colors (system loss, peak demand, etc.) stay fixed since
+// they're meaningful, named series rather than an arbitrary palette.
+if (typeof Chart !== "undefined") {
+  Chart.defaults.font.family = STYLE.font_family || "Arial";
+  Chart.defaults.font.size = STYLE.label_size || 12;
+  Chart.defaults.animation = STYLE.animation === false ? false : {};
+}
+const GRID_OPT = { display: STYLE.show_grid !== false };
 
 function niceMax(arr, pad=1.25) {
   const vals = (arr || []).filter(v => v !== null && v !== undefined && !isNaN(v));
@@ -476,17 +492,10 @@ function init() {
 }
 
 if (!DATA || Object.keys(DATA).length === 0) {
-  // FIX: this used to always show the same generic "check back shortly"
-  // text no matter what actually went wrong (sheet not shared, bad
-  // NEA_SHEET_URL, parse error, or just no sync yet). NEA_STATUS.message
-  // (from NEA.sync_status_message() on the server) carries the real
-  // reason, so a misconfigured sheet is diagnosable straight from the
-  // page instead of only from server logs / the /admin panel.
-  const reason = (NEA_STATUS && NEA_STATUS.message) ||
-    "Please check back shortly, or refer to NEA's official reports at www.nea.org.np.";
   document.getElementById("nea-content").innerHTML =
     '<div class="nea-error"><i class="fas fa-triangle-exclamation"></i> No NEA operational data is available ' +
-    'right now. ' + reason.replace(/&/g, "&amp;").replace(/</g, "&lt;") + '</div>';
+    'right now. Please check back shortly, or refer to NEA\'s official reports at ' +
+    '<a href="https://www.nea.org.np" target="_blank">www.nea.org.np</a>.</div>';
 } else {
   init();
 }
