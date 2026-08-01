@@ -7,3 +7,5 @@ openpyxl>=3.1.0
 matplotlib>=3.8.0
 statsmodels>=0.14.0
 gunicorn>=21.2.0
+gspread>=6.0.0
+google-auth>=2.28.0
