@@ -44,6 +44,7 @@
   <div class="nea-subtabs-nav" id="nea-category-tabs" role="tablist">
     <button type="button" class="nea-subtab-btn active" data-cat="technical">🔧 Technical Performance</button>
     <button type="button" class="nea-subtab-btn" data-cat="financial">💰 Financial Performance</button>
+    <button type="button" class="nea-subtab-btn" data-cat="distribution">🏘️ Distribution</button>
   </div>
 
   <div class="nea-cat" data-cat="technical">
@@ -122,6 +123,36 @@
   </div>
   </div>
   <!-- /financial -->
+
+  <div class="nea-cat" data-cat="distribution">
+  <div class="nea-section">
+    <h3><i class="fas fa-map-location-dot"></i> Distribution Data by Province</h3>
+    <div class="nea-controls">
+      Metric: <select class="nea-select" id="dist-metric-select"></select>
+      Fiscal Year: <select class="nea-select" id="dist-fy-select"></select>
+    </div>
+    <div id="dist-empty-state" class="nea-footnote" style="display:none;">
+      No distribution data yet — add a tab named "Distribution - &lt;metric&gt;" (e.g. "Distribution - Consumers")
+      to the NEA Google Sheet, with Province in the first column and one column per fiscal year.
+    </div>
+    <div id="dist-charts-wrap">
+      <div class="nea-chart-box"><canvas id="chart-distribution-provinces"></canvas></div>
+    </div>
+  </div>
+
+  <div class="nea-section" id="dist-trend-section">
+    <h3><i class="fas fa-chart-line"></i> Distribution Trend by Province (all years)</h3>
+    <div class="nea-chart-box tall"><canvas id="chart-distribution-trend"></canvas></div>
+  </div>
+
+  <div class="nea-section" id="dist-table-section">
+    <h3><i class="fas fa-table"></i> Distribution Data Table</h3>
+    <div style="overflow-x:auto;">
+      <table id="dist-table" style="width:100%; border-collapse:collapse; font-size:13px;"></table>
+    </div>
+  </div>
+  </div>
+  <!-- /distribution -->
 
   </div>
 </div>
@@ -417,6 +448,73 @@ function safe(label, fn) {
   }
 }
 
+let distProvChart = null, distTrendChart = null;
+
+function renderDistributionProvinces(metric, fy) {
+  const d = (DATA.distribution || {})[metric] || { years: [], provinces: {} };
+  const idx = d.years.indexOf(fy);
+  const provinces = Object.keys(d.provinces);
+  const vals = provinces.map(p => (idx >= 0 ? (d.provinces[p][idx] ?? null) : null));
+  if (distProvChart) distProvChart.destroy();
+  distProvChart = new Chart(document.getElementById("chart-distribution-provinces"), {
+    type: "bar",
+    data: { labels: provinces, datasets: [ barDataset(`${metric} — ${fy}`, vals, PALETTE[0]) ] },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} }
+  });
+}
+
+function renderDistributionTrend(metric) {
+  const d = (DATA.distribution || {})[metric] || { years: [], provinces: {} };
+  const provinces = Object.keys(d.provinces);
+  if (distTrendChart) distTrendChart.destroy();
+  distTrendChart = new Chart(document.getElementById("chart-distribution-trend"), {
+    type: "line",
+    data: { labels: d.years, datasets: provinces.map((p, i) =>
+      lineDataset(p, d.provinces[p], PALETTE[i % PALETTE.length])) },
+    options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:"bottom"}} }
+  });
+}
+
+function renderDistributionTable(metric) {
+  const d = (DATA.distribution || {})[metric] || { years: [], provinces: {} };
+  const provinces = Object.keys(d.provinces);
+  const table = document.getElementById("dist-table");
+  let head = "<thead><tr><th style=\"text-align:left;padding:6px 10px;border-bottom:2px solid #c7d2e2;\">Province</th>";
+  d.years.forEach(y => { head += `<th style="text-align:right;padding:6px 10px;border-bottom:2px solid #c7d2e2;">${y}</th>`; });
+  head += "</tr></thead>";
+  let body = "<tbody>";
+  provinces.forEach(p => {
+    body += `<tr><td style="padding:6px 10px;border-bottom:1px solid #e5eaf1;">${p}</td>`;
+    (d.provinces[p] || []).forEach(v => {
+      body += `<td style="text-align:right;padding:6px 10px;border-bottom:1px solid #e5eaf1;">${fmt(v)}</td>`;
+    });
+    body += "</tr>";
+  });
+  body += "</tbody>";
+  table.innerHTML = head + body;
+}
+
+function setupDistributionSection(metrics) {
+  const metricSelect = document.getElementById("dist-metric-select");
+  const fySelect = document.getElementById("dist-fy-select");
+  metricSelect.innerHTML = "";
+  metrics.forEach(m => {
+    const opt = document.createElement("option");
+    opt.value = m; opt.textContent = m;
+    metricSelect.appendChild(opt);
+  });
+  const applyMetric = (metric) => {
+    const d = (DATA.distribution || {})[metric] || { years: [] };
+    populateFySelect(fySelect, d.years, (fy) => renderDistributionProvinces(metric, fy));
+    renderDistributionProvinces(metric, d.years[d.years.length - 1]);
+    renderDistributionTrend(metric);
+    renderDistributionTable(metric);
+  };
+  metricSelect.addEventListener("change", () => applyMetric(metricSelect.value));
+  metricSelect.value = metrics[0];
+  applyMetric(metrics[0]);
+}
+
 function setupCategorySelect() {
   const nav = document.getElementById("nea-category-tabs");
   if (!nav) return;
@@ -481,6 +579,19 @@ function init() {
       });
       expChart = renderMonthlySingle("chart-export", expKeys[expKeys.length - 1], DATA.exportData, months, null);
     });
+  }
+
+  const distMetrics = Object.keys(DATA.distribution || {});
+  const distEmptyEl = document.getElementById("dist-empty-state");
+  const distTrendSection = document.getElementById("dist-trend-section");
+  const distTableSection = document.getElementById("dist-table-section");
+  if (distMetrics.length) {
+    safe("distribution", () => setupDistributionSection(distMetrics));
+  } else {
+    if (distEmptyEl) distEmptyEl.style.display = "";
+    document.getElementById("dist-charts-wrap").style.display = "none";
+    if (distTrendSection) distTrendSection.style.display = "none";
+    if (distTableSection) distTableSection.style.display = "none";
   }
 
   // Apply the Technical/Financial filter LAST, after every chart above
